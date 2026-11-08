@@ -1,6 +1,4 @@
-# OG-Open-Source README Standard
-
-This document defines the standard README structure and the management rules for every repository within the OG-Open-Source organization.
+# RIGG
 
 ## Table of Contents
 
@@ -21,19 +19,22 @@ This document defines the standard README structure and the management rules for
 
 ## Introduction
 
-OG-Open-Source develops and shares innovative open-source software. Its mission is to build and sustain high-quality, community-driven projects that empower developers and users worldwide.
+RIGG is a monorepo that collects clean-room rewrites of third-party API services in Go. The first target is X (formerly Twitter); YouTube is planned. Upstream services are studied for protocol behavior only, and all code in this repository is written from scratch — no upstream source code is copied into any published artifact.
 
 ### Features
 
-Each repository **should** describe its highlights and the problems it solves. Repositories can adapt this section to their needs, using the following structure:
+Current and planned projects, one independent Go module per directory:
 
-- The core capabilities of the project.
-- The specific problem the project solves.
-- The principal advantages over comparable approaches.
+| Project | Description | Status |
+| --- | --- | --- |
+| [`x/`](x/) | X (Twitter) API client in Go, built on the [mygo](https://github.com/egoist/mygo) native template | v0.1.0 in progress — planned v1 scope: login, signup, timeline, and profile reading |
+| `youtube/` | YouTube API client in Go | Planned |
+
+The hardest upstream algorithms are treated as pure computation and will be re-derived independently; the upstream repository under `vendor/XApis/` is a protocol reference only.
 
 ### Attribution
 
-Every project in this organization **MUST** use the [MIT License](https://opensource.org/license/MIT) as its only license, recorded in `/LICENSE`. Third-party components are excluded from this requirement.
+This project uses the [MIT License](https://opensource.org/license/MIT) as its only license, recorded in [`/LICENSE`](LICENSE). Third-party components are excluded from this requirement.
 
 The OG-Open-Source organization is regarded as an intangible entity rather than a legal person.
 
@@ -43,49 +44,66 @@ Except for third-party components, all content in this organization reserves onl
 
 ### Prerequisites
 
-List every environment requirement, including the runtime and its minimum version, such as Node.js 20.0 or later or Python 3.12 or later. Each repository **should** state the exact version required for each dependency.
+- [Go](https://go.dev) 1.27.3 or later (matching the `go` directive in [`x/go.mod`](x/go.mod))
+- Git with submodule support
+- [mygo](https://github.com/egoist/mygo) — no separate installation required; it is fetched on demand as a Go tool dependency via `go run github.com/egoist/mygo/cmd/mygo@latest` or `go tool mygo` inside the project
 
 ### Installation
 
 Clone the repository and initialize its submodules:
 
 ```bash
-git clone https://github.com/OG-Open-Source/REPOSITORY_NAME.git
-cd REPOSITORY_NAME
+git clone --recurse-submodules https://github.com/RIGG/RIGG.git
+cd RIGG
+```
+
+If the repository was already cloned without submodules:
+
+```bash
 git submodule update --init --recursive
 ```
 
-Every repository **MUST** include the organization README standard through the `.github` repository as a submodule at `/.github/`:
+Verify that all submodules are initialized:
 
 ```bash
-git submodule add https://github.com/OG-Open-Source/.github.git .github
+git submodule status
 ```
 
 ### Third-Party Components
 
-Third-party libraries **should** be installed through the package manager of their language ecosystem whenever that package manager provides them, and the package manager's lock file **MUST** be committed. Packages installed through a package manager are not stored in `/vendor/`.
+Go dependencies are resolved through the Go module proxy with checksums committed in each project's `go.sum` file.
 
-When no package manager provides a library, the library **MUST** be introduced with the `git submodule add` command and moved into the `/vendor/` directory with the `git mv` command:
-
-```bash
-git submodule add https://github.com/THIRD_PARTY_OWNER/THIRD_PARTY_REPOSITORY.git THIRD_PARTY_REPOSITORY
-git mv THIRD_PARTY_REPOSITORY vendor/THIRD_PARTY_REPOSITORY
-git commit -m "chore: vendor THIRD_PARTY_REPOSITORY"
-```
-
-Each third-party component **MUST** retain its original license file without modification.
+| Component | Source | Location | License | Notes |
+| --- | --- | --- | --- | --- |
+| `.github` | [OG-Open-Source/.github](https://github.com/OG-Open-Source/.github) | `.github/` (submodule) | MIT (retained) | Organization-wide documentation standard |
+| XApis | [cv-cat/XApis](https://github.com/cv-cat/XApis) | `vendor/XApis/` (submodule) | **No license file** | Used strictly as an internal protocol reference for clean-room development. It is not copied into any published artifact and is not a runtime dependency. Its Python implementation is never executed by this project. |
+| [mygo](https://github.com/egoist/mygo) | Go module dependency | Managed by the Go toolchain | See upstream | Desktop/web UI framework used by `x/` |
 
 ### Usage
 
-Provide at least one example for each primary function, showing the command or code and its expected output:
+Develop the `x` project with live reload:
 
 ```bash
-REPOSITORY_NAME --option VALUE
+cd x
+go tool mygo dev
+```
+
+Build the `x` project as a web/Wasm static site:
+
+```bash
+cd x
+go tool mygo build -platform web
+```
+
+Build the `x` project for the desktop and run the tests:
+
+```bash
+cd x
+go tool mygo build
+go test ./...
 ```
 
 ## Contributing
-
-Repositories that accept pull requests **MUST** link the Code of Conduct. Issues are optional.
 
 ### Code of Conduct
 
@@ -100,27 +118,25 @@ To contribute to a repository:
 
 ### Development Guidelines
 
-- Except for third-party components, repositories **MUST** adopt consensus standards that are free of charge and applicable to code. Where a [Request for Comments](https://www.rfc-editor.org/) document applies, it takes priority over other standards.
-- Commit messages **can** follow the [Conventional Commits](https://www.conventionalcommits.org) specification, version 1.0.0.
-- Changes **can** be recorded in `/CHANGELOG.md` following the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) convention, version 1.1.0.
+- Source code and comments are written in English.
+- Files **MUST** be saved in UTF-8 encoding with LF line endings, enforced by [`.gitattributes`](.gitattributes).
+- Commit messages **MUST** follow the [Conventional Commits](https://www.conventionalcommits.org) specification, version 1.0.0.
 - Source code **should** pass the linter defined by the project before submission.
+- Each project directory is one independent Go module; do not introduce a `go.work` file.
+- Third-party code without a package manager lives under `/vendor/` as a submodule with its original license retained.
 - Documentation **MUST** be written in Markdown.
-- Files **MUST** be saved in UTF-8 encoding.
-- Special files, meaning files that Git hosting platforms recognize by community consensus, **MUST** have names matching `^[A-Z_]+\.md$`, such as `/README.md` and `/CODE_OF_CONDUCT.md`. `/LICENSE` is the sole exception. Ordinary source code is not subject to this rule.
 
 ### Versioning
 
-Each project **MUST** adopt exactly one of the following versioning schemes:
-
-- [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 2.0.0.
-- UNIX timestamp.
-- Date in the `YYYY.MM.DD` format.
+Each project in this monorepo adopts [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 2.0.0 with `X.Y.Z` versions.
 
 Every tag **MUST** match the pattern `[a-z0-9\.-]+`.
 
+Tags are created when a version actually ships with its features; the current `x` version is 0.1.0 in progress and is not yet tagged.
+
 ### Issue Reporting
 
-Repositories that accept issues **should** provide an issue template that requests the following information:
+When reporting an issue, please include:
 
 - The environment, including the operating system and the runtime version.
 - The steps required to reproduce the problem.
@@ -129,7 +145,9 @@ Repositories that accept issues **should** provide an issue template that reques
 
 ## Acknowledgments
 
-We thank every contributor who has helped improve this project. View the full list of contributors on the [contributors graph](https://github.com/OG-Open-Source/.github/graphs/contributors).
+- [egoist/mygo](https://github.com/egoist/mygo) — the native Go UI framework scaffolding the `x` project
+- [cv-cat/XApis](https://github.com/cv-cat/XApis) — protocol reference for the clean-room X rework
+- [OG-Open-Source](https://github.com/OG-Open-Source) — the organization behind this monorepo
 
 ---
 
