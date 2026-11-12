@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-11-12T22:04:07+08:00",
+  "frontendSha": null,
+  "operations": [
+    {"operationName": "Viewer", "operationType": "query", "queryId": "TpQxQtWMTMnIAMPlMGMqNw", "featureSwitches": [], "fieldToggles": []},
+    {"operationName": "HomeTimeline", "operationType": "query", "queryId": "KmJCeZ__ef1fNos7tKN_fg", "featureSwitches": [], "fieldToggles": []}
+  ],
+  "featureDefaults": {}
+}
