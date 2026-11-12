@@ -1,6 +1,6 @@
 {
   "name": "X",
-  "identifier": "com.example.x",
+  "identifier": "com.ogopensource.rigg.x",
   "version": "0.1.0",
   "out": "build"
 }
