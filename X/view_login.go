@@ -20,8 +20,9 @@ func (a *app) loginView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Center().Gap(16).Padding(24).Children(func() {
 		ui.Text(c, "X").FontSize(26).Bold()
-		// 代理狀態列（startToken 的解析結果）：解析中／就緒／fail-closed 錯誤。
-		proxyLine := "代理：解析中…"
+		// 連線狀態列（startToken 的解析結果）：D10 下直連是基線，偵測或
+		// 配置到代理時升級顯示。
+		proxyLine := "連線：直連模式（未配置代理）"
 		switch {
 		case a.proxyErr != nil:
 			proxyLine = "代理：" + errorText(a.proxyErr)

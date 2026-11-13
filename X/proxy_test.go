@@ -67,15 +67,17 @@ func TestProxyOrder(t *testing.T) {
 }
 
 // TestProxyFailClosed 驟三層皆空 → ("", error)（fail-closed，REQ-INV-02）。
-func TestProxyFailClosed(t *testing.T) {
+// TestProxyNone_DirectAllowed_D10 釘住 D10 裁決（需求方 2026-11-13：正常
+// 用途直連）：三層皆無 → ("", nil)，由呼叫端以 AllowDirect 直連。
+func TestProxyNone_DirectAllowed_D10(t *testing.T) {
 	clearProxyEnv(t)
 	stubSystemProxy(t, "", false)
 	got, err := ResolveProxy()
-	if err == nil {
-		t.Fatal("三層皆空應回錯誤（fail-closed）")
+	if err != nil {
+		t.Fatalf("D10：三層皆空應回直連（nil error），得 %v", err)
 	}
 	if got != "" {
-		t.Fatalf("fail-closed 應回空字串，得 %q", got)
+		t.Fatalf("直連模式應回空字串，得 %q", got)
 	}
 }
 
@@ -97,10 +99,10 @@ func TestProxyDetectPreflight(t *testing.T) {
 
 	stubSystemProxy(t, "http://127.0.0.1:1", true)
 	got2, err := ResolveProxy()
-	if err == nil {
-		t.Fatal("不可達偵測位址應回錯誤")
+	if err != nil {
+		t.Fatalf("D10：預檢失敗應視同未偵測到（直連），得 %v", err)
 	}
 	if got2 != "" {
-		t.Fatalf("預檢失敗應回空字串，得 %q", got2)
+		t.Fatalf("預檢失敗應回空字串（直連），得 %q", got2)
 	}
 }

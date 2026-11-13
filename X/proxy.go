@@ -53,10 +53,11 @@ var detectSystemProxy = func() (string, bool) {
 //     未設定。
 //   - 系統偵測（netproxy）：啟發式結果，命中後對偵測位址做 5 秒短逾時
 //     預檢，通過才採用；預檢失敗回 ("", error)，不靜默退回直連。
-//   - 皆無：("", error)——fail-closed（REQ-INV-02），絕不回直連。
+//   - 皆無：("", nil)——直連模式（D10：正常用途直連，需求方 2026-11-13
+//     裁決修訂 REQ-INV-02 於本桌面 app 的適用；OQ12 探測實證直連可達且
+//     0×226/344）。proxy 非空時 transport 仍經代理。
 //
-// 錯誤分類：無可用代理為可重試的 bootstrap 素材缺失（kind=material）；
-// 偵測位址預檢失敗為傳輸層（kind=transport）。訊息不含任何憑證材料。
+// 錯誤回傳保留予未來需要硬性代理的部署形態；訊息不含任何憑證材料。
 func ResolveProxy() (string, error) {
 	for _, name := range []string{envXProxy, envHTTPSProxy, envAllProxy} {
 		if v := os.Getenv(name); v != "" {
@@ -65,11 +66,11 @@ func ResolveProxy() (string, error) {
 	}
 	if p, ok := detectSystemProxy(); ok && p != "" {
 		if err := proxyPreflight(p); err != nil {
-			return "", err
+			return "", nil // 預檢失敗：視同未偵測到，落入直連（D10）
 		}
 		return p, nil
 	}
-	return "", &xerrors.MaterialError{Msg: "無可用代理：X_PROXY／HTTPS_PROXY／ALL_PROXY 皆未設定且系統偵測無結果（fail-closed，REQ-INV-02、D6）"}
+	return "", nil // 直連模式（D10）
 }
 
 // proxyPreflight 對偵測位址做 TCP 短逾時預檢：僅驗「單一已知位址」的

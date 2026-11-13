@@ -7,6 +7,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/api"
@@ -27,10 +28,19 @@ type (
 // homePageSize 是每次翻頁的 count（契約 3：HomeTimeline(cursor, 20, seen)）。
 const homePageSize = 20
 
-// registryPath 是註冊表快照路徑。快照檔（static/graphql.json）屬下一任務
-// 交付；本任務先接線——載入失敗呈現於 login 頁錯誤區（fail-closed，不
-// 靜默略過），startToken 預載與 newSession 實載共用同一來源。
-var registryPath = filepath.Join("static", "graphql.json")
+// registryPath 解析註冊表快照位置：優先可執行檔同目錄（mygo build 經
+// mygo.json 的 resources 出貨 static/graphql.json 至 exe 旁），退回工作
+// 目錄相對路徑（go run／開發情境，cwd 為模組根，static/ 在原位）。兩處
+// 皆無時由 LoadRegistry 回錯（login 頁呈現，fail-closed）。
+func registryPath() string {
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), "static", "graphql.json")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return filepath.Join("static", "graphql.json")
+}
 
 // engineStore 是引擎接線的系統憑證庫儲存層：main 於啟動時指派
 // （NewCookieStore），newSession 以 WithCookieStore 接入——Sender 回應
@@ -65,9 +75,9 @@ var _ xSession = (*engineSession)(nil)
 //   - cookieLine 為空 → 略過（login 流由 Validate(cookieLine) 完成備料與
 //     驗證；空行不觸發 ct0 本地生成，REQ-AUTH-005）。
 //
-// 代理必配（transport fail-closed，REQ-INV-02）：proxyURL 無效時回
-// *xerrors.TransportError；註冊表載入失敗回原錯——兩者皆由 login 頁
-// 錯誤區呈現。
+// 代理語義（D10：正常用途直連，需求方 2026-11-13 裁決）：proxyURL 非空
+// 時 transport 經代理；空時以 AllowDirect 直連（OQ12 探測實證）。註冊表
+// 載入失敗回原錯——由 login 頁錯誤區呈現。
 func newSession(cookieLine, proxyURL string) (*engineSession, error) {
 	fp := fingerprint.Get()
 	opts := []auth.AuthOption(nil)
@@ -80,11 +90,11 @@ func newSession(cookieLine, proxyURL string) (*engineSession, error) {
 			return nil, err
 		}
 	}
-	reg, err := graphql.LoadRegistry(registryPath)
+	reg, err := graphql.LoadRegistry(registryPath())
 	if err != nil {
 		return nil, err
 	}
-	tr, err := transport.New(fp, transport.Options{ProxyURL: proxyURL})
+	tr, err := transport.New(fp, transport.Options{ProxyURL: proxyURL, AllowDirect: true})
 	if err != nil {
 		return nil, err
 	}

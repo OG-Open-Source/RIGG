@@ -127,7 +127,7 @@ func (a *app) startToken() {
 		proxy, perr := ResolveProxy()
 		var rerr error
 		if perr == nil {
-			if _, err := graphql.LoadRegistry(registryPath); err != nil {
+			if _, err := graphql.LoadRegistry(registryPath()); err != nil {
 				rerr = err
 			}
 		}
