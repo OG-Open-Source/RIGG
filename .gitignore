@@ -20,3 +20,6 @@ node_modules/
 *.xlsx
 
 # X/static/ 快照為隨倉庫出貨檔，不忽略（見 docs/designs/x-engine-v1.md §4.2）
+
+# MyGO build artifacts
+X/build/
