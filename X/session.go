@@ -28,13 +28,14 @@ type (
 // homePageSize 是每次翻頁的 count（契約 3：HomeTimeline(cursor, 20, seen)）。
 const homePageSize = 20
 
-// registryPath 解析註冊表快照位置：優先可執行檔同目錄（mygo build 經
-// mygo.json 的 resources 出貨 static/graphql.json 至 exe 旁），退回工作
-// 目錄相對路徑（go run／開發情境，cwd 為模組根，static/ 在原位）。兩處
-// 皆無時由 LoadRegistry 回錯（login 頁呈現，fail-closed）。
+// registryPath 解析註冊表快照位置：優先可執行檔同目錄的扁平檔名
+// （mygo build 的 resources 會攤平路徑——static/graphql.json 出貨為
+// exe 旁的 graphql.json），退回工作目錄相對路徑（go run／開發情境，
+// cwd 為模組根，static/ 在原位）。兩處皆無時由 LoadRegistry 回錯
+// （login 頁呈現，fail-closed）。
 func registryPath() string {
 	if exe, err := os.Executable(); err == nil {
-		p := filepath.Join(filepath.Dir(exe), "static", "graphql.json")
+		p := filepath.Join(filepath.Dir(exe), "graphql.json")
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}

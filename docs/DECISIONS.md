@@ -350,6 +350,7 @@ v1.0.13-utls）。
   顯式配置的代理仍被採用」。成本：直連暴露真實 IP 且無指紋代理保護——
   若 X 日後對該出口 IP 形態收緊風控（226/344 上升），重新啟用代理即可
   （transport 支援不變）。
-* **配套**：註冊表快照經 mygo.json `resources` 出貨至執行檔旁
-  （`registryPath()` 優先 exe 目錄、退回 cwd）——修正 L2 後首次實機
+* **配套**：註冊表快照經 mygo.json `resources` 出貨至執行檔旁（MyGO 會
+  攤平路徑：出貨為 exe 旁的 `graphql.json`；`registryPath()` 優先 exe
+  目錄、退回開發期的 `static/graphql.json`）——修正 L2 後首次實機
   登入的兩個失敗根因（快照未出貨＋代理 fail-closed）。
