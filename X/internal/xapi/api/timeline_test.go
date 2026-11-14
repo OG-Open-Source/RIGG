@@ -31,11 +31,14 @@ import (
 )
 
 // timelineRegistryJSON 是本檔的合成註冊表 fixture（測試專用，非 X 原文）：
-// Viewer 與 HomeTimeline 皆為 query 型、無 features／fieldToggles 宣告。
+// Viewer／HomeTimeline／HomeLatestTimeline 皆為 query 型、無
+// features／fieldToggles 宣告（HomeLatestTimeline 沿 D16：雙形態同構
+// HomeTimeline、空 features——DECISIONS〈v1.1 P0' 探測〉節）。
 const timelineRegistryJSON = `{"generatedAt":"2026-11-12T00:00:00+08:00","frontendSha":null,
  "operations":[
   {"operationName":"Viewer","operationType":"query","queryId":"VIEWERID","featureSwitches":[],"fieldToggles":[]},
-  {"operationName":"HomeTimeline","operationType":"query","queryId":"HOMEID","featureSwitches":[],"fieldToggles":[]}],
+  {"operationName":"HomeTimeline","operationType":"query","queryId":"HOMEID","featureSwitches":[],"fieldToggles":[]},
+  {"operationName":"HomeLatestTimeline","operationType":"query","queryId":"HOMELATESTID","featureSwitches":[],"fieldToggles":[]}],
  "featureDefaults":{}}`
 
 // loadTimelineRegistry 將合成註冊表寫入暫存檔並載入（走真檔案路徑）。
@@ -637,5 +640,194 @@ func TestTimelineBadEntrySkipped(t *testing.T) {
 	}
 	if res.Cursor != "" {
 		t.Errorf("無游標時 Cursor 應為空字串，得到 %q", res.Cursor)
+	}
+}
+
+// TestHomeLatestTimeline_FirstPageGET：cursor=""、seen=nil → 與 HomeTimeline
+// 同構的 GET 啟動形態（P0' 實證 GET 20/20——DECISIONS〈v1.1 P0' 探測〉節；
+// D16：雙形態同構 HomeTimeline）：wire 為 GET、query 以 variables= 起始、
+// 變數含 "requestContext":"launch"（首頁啟動）、無 seenTweetIds、count 以
+// 數字上線；合成回應 → 解析出 posts／users／cursor。
+func TestHomeLatestTimeline_FirstPageGET(t *testing.T) {
+	data := tlData([]map[string]any{
+		tlTweetEntry("tweet-1", "8001", "latest-alpha"),
+		tlTweetEntry("tweet-2", "8002", "latest-beta"),
+		tlEntry("cursor-bottom-0", map[string]any{"cursorType": "Bottom", "value": "LATESTCUR"}),
+	})
+	fx := newTimelineFixture(t, tlRespond(t, data))
+	res, err := fx.sender.HomeLatestTimeline("", 20, nil)
+	if err != nil {
+		t.Fatalf("HomeLatestTimeline error = %v, 期望 nil", err)
+	}
+	if res == nil {
+		t.Fatal("HomeLatestTimeline 不應回 nil result")
+	}
+	wantPosts := []Post{
+		{WorkID: "8001", WorkURL: "https://x.com/user_8001/status/8001", ScreenName: "user_8001", Title: "latest-alpha"},
+		{WorkID: "8002", WorkURL: "https://x.com/user_8002/status/8002", ScreenName: "user_8002", Title: "latest-beta"},
+	}
+	if !reflect.DeepEqual(res.Posts, wantPosts) {
+		t.Errorf("Posts = %+v, 期望 %+v", res.Posts, wantPosts)
+	}
+	wantUsers := []User{
+		{UserID: "u-8001", ScreenName: "user_8001", Name: "User 8001"},
+		{UserID: "u-8002", ScreenName: "user_8002", Name: "User 8002"},
+	}
+	if !reflect.DeepEqual(res.Users, wantUsers) {
+		t.Errorf("Users = %+v, 期望 %+v", res.Users, wantUsers)
+	}
+	if res.Cursor != "LATESTCUR" {
+		t.Errorf("Cursor = %q, 期望 \"LATESTCUR\"", res.Cursor)
+	}
+
+	reqs := fx.captured()
+	if len(reqs) != 1 {
+		t.Fatalf("捕捉伺服器應收到 1 個請求，得到 %d", len(reqs))
+	}
+	req := reqs[0]
+	if !strings.HasPrefix(req.requestLine(), "GET /i/api/graphql/HOMELATESTID/HomeLatestTimeline?") {
+		t.Fatalf("首頁形態應以 GET 送出至 op.Path()，請求行：%s", req.requestLine())
+	}
+	q := req.query()
+	if !strings.HasPrefix(q, "variables=") {
+		t.Errorf("query string 應以 variables= 起始，得到：%s", q)
+	}
+	vars := timelineQueryVar(t, q, "variables")
+	keys := jsonKeyOrder(t, []byte(vars))
+	want := []string{"count", "includePromotedContent", "withCommunity", "requestContext"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Errorf("variables 鍵序 = %v, 期望 %v（與 HomeTimeline 同構的啟動形態）", keys, want)
+	}
+	if !strings.Contains(vars, `"requestContext":"launch"`) {
+		t.Errorf("無已讀且無游標時應含 \"requestContext\":\"launch\"，得到：%s", vars)
+	}
+	if strings.Contains(vars, "seenTweetIds") {
+		t.Errorf("GET 形態不得含 seenTweetIds，得到：%s", vars)
+	}
+	if !strings.Contains(vars, `"count":20`) {
+		t.Errorf("count 應以數字上線，得到：%s", vars)
+	}
+}
+
+// TestHomeLatestTimeline_WithSeenPOST：cursor 非空且 seen 非空（P0' 實測的
+// POST(cursor+seen) 臂）→ 與 HomeTimeline 同構地覆寫為 POST（REQ-GQL-005）、
+// body 頂層鍵序 variables→features→fieldToggles→queryId（REQ-GQL-003；無
+// features／fieldToggles 宣告時中間兩鍵整鍵省略）、seenTweetIds 置變數末、
+// cursor 變數在場、無 requestContext；註冊表共用的 Operation.Method 不得被
+// 原地改寫。
+func TestHomeLatestTimeline_WithSeenPOST(t *testing.T) {
+	fx := newTimelineFixture(t, tlRespond(t, tlData()))
+	res, err := fx.sender.HomeLatestTimeline("DAABCgAB", 20, []string{"1770", "1771"})
+	if err != nil {
+		t.Fatalf("HomeLatestTimeline error = %v, 期望 nil", err)
+	}
+	if res == nil {
+		t.Fatal("HomeLatestTimeline 不應回 nil result")
+	}
+
+	reqs := fx.captured()
+	if len(reqs) != 1 {
+		t.Fatalf("捕捉伺服器應收到 1 個請求，得到 %d", len(reqs))
+	}
+	req := reqs[0]
+	if !strings.HasPrefix(req.requestLine(), "POST /i/api/graphql/HOMELATESTID/HomeLatestTimeline") {
+		t.Fatalf("cursor／seen 非空時應以 POST 送出，請求行：%s", req.requestLine())
+	}
+	topKeys := jsonKeyOrder(t, req.body)
+	if want := []string{"variables", "queryId"}; !reflect.DeepEqual(topKeys, want) {
+		t.Errorf("body 頂層鍵序 = %v, 期望 %v（REQ-GQL-003：variables→features→fieldToggles→queryId，無宣告時省略）", topKeys, want)
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(req.body, &parsed); err != nil {
+		t.Fatalf("body 解析失敗：%v（body=%q）", err, req.body)
+	}
+	varKeys := jsonKeyOrder(t, parsed["variables"])
+	want := []string{"count", "includePromotedContent", "withCommunity", "cursor", "seenTweetIds"}
+	if !reflect.DeepEqual(varKeys, want) {
+		t.Errorf("variables 鍵序 = %v, 期望 %v（cursor 在場、seenTweetIds 置於變數末）", varKeys, want)
+	}
+	if strings.Contains(string(parsed["variables"]), "requestContext") {
+		t.Errorf("POST 形態不得含 requestContext，得到：%s", parsed["variables"])
+	}
+	var vars map[string]json.RawMessage
+	if err := json.Unmarshal(parsed["variables"], &vars); err != nil {
+		t.Fatalf("variables 解析失敗：%v", err)
+	}
+	if string(vars["cursor"]) != `"DAABCgAB"` {
+		t.Errorf("cursor = %s, 期望 \"DAABCgAB\"", vars["cursor"])
+	}
+	if string(vars["seenTweetIds"]) != `["1770","1771"]` {
+		t.Errorf("seenTweetIds = %s, 期望 [\"1770\",\"1771\"]（字串陣列）", vars["seenTweetIds"])
+	}
+
+	op, err := fx.reg.Operation("HomeLatestTimeline")
+	if err != nil {
+		t.Fatalf("Operation(HomeLatestTimeline) error = %v, 期望 nil", err)
+	}
+	if op.Method != "GET" {
+		t.Errorf("註冊表共用的 Operation.Method 不得被覆寫，得到 %q", op.Method)
+	}
+}
+
+// TestHomeLatestTimeline_ExtractsCursorAndPosts：合成 timeline 回應（含
+// promoted- 前綴條目、result 帶 promotedMetadata 的 tweet- 條目、跨段同
+// work_id 重現、TweetWithVisibilityResults 包裹）→ 解析與 HomeTimeline 同構
+//（D16）：去促銷、work_id 去重、首見順序、Bottom 游標（REQ-WEB-104／
+// REQ-RD-012/013 語義）；同一資料經 HomeTimeline 解析的結果逐欄位一致。
+func TestHomeLatestTimeline_ExtractsCursorAndPosts(t *testing.T) {
+	inner := tlResult("8004", "wrapped")
+	data := tlData(
+		[]map[string]any{
+			tlTweetEntry("tweet-1", "8001", "alpha"),
+			tlEntry("promoted-tweet-7", tlItem(map[string]any{
+				"rest_id":          "8007",
+				"legacy":           map[string]any{"full_text": "ad"},
+				"promotedMetadata": map[string]any{"advertiser": "x"},
+			})),
+			tlEntry("tweet-2", tlItem(map[string]any{
+				"__typename": "TweetWithVisibilityResults",
+				"tweet":      inner,
+			})),
+		},
+		[]map[string]any{
+			tlTweetEntry("tweet-1-again", "8001", "alpha"), // 同 work_id 重現 → 去重
+			tlEntry("tweet-3", tlItem(func() map[string]any {
+				r := tlResult("8003", "gamma")
+				r["promotedMetadata"] = map[string]any{"advertiser": "y"} // result 含 promotedMetadata → 排除
+				return r
+			}())),
+			tlEntry("cursor-bottom-0", map[string]any{"cursorType": "Bottom", "value": "LATESTCUR2"}),
+		},
+	)
+	fx := newTimelineFixture(t, tlRespond(t, data))
+	res, err := fx.sender.HomeLatestTimeline("", 20, nil)
+	if err != nil {
+		t.Fatalf("HomeLatestTimeline error = %v, 期望 nil", err)
+	}
+	wantPosts := []Post{
+		{WorkID: "8001", WorkURL: "https://x.com/user_8001/status/8001", ScreenName: "user_8001", Title: "alpha"},
+		{WorkID: "8004", WorkURL: "https://x.com/user_8004/status/8004", ScreenName: "user_8004", Title: "wrapped"},
+	}
+	if !reflect.DeepEqual(res.Posts, wantPosts) {
+		t.Errorf("Posts = %+v, 期望 %+v（去促銷、work_id 去重、首見順序、包裹解包）", res.Posts, wantPosts)
+	}
+	wantUsers := []User{
+		{UserID: "u-8001", ScreenName: "user_8001", Name: "User 8001"},
+		{UserID: "u-8004", ScreenName: "user_8004", Name: "User 8004"},
+	}
+	if !reflect.DeepEqual(res.Users, wantUsers) {
+		t.Errorf("Users = %+v, 期望 %+v", res.Users, wantUsers)
+	}
+	if res.Cursor != "LATESTCUR2" {
+		t.Errorf("Cursor = %q, 期望 \"LATESTCUR2\"（ExtractCursor(data, \"Bottom\")）", res.Cursor)
+	}
+
+	// 同構（D16）：同一合成資料經 HomeTimeline 解析的結果應逐欄位一致。
+	resHome, err := fx.sender.HomeTimeline("", 20, nil)
+	if err != nil {
+		t.Fatalf("HomeTimeline error = %v, 期望 nil", err)
+	}
+	if !reflect.DeepEqual(res, resHome) {
+		t.Errorf("HomeLatestTimeline 與 HomeTimeline 對同一資料的解析結果應同構：got %+v, want %+v", res, resHome)
 	}
 }

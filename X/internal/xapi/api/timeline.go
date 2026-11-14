@@ -205,8 +205,11 @@ func postUser(m map[string]any) User {
 	}
 }
 
-// HomeTimeline 讀取首頁時間線（REQ-RD-001..004）並解析為 TimelineResult。
-// 變數雙形態（OQ3 裁決、DECISIONS D1、REQ-GQL-005）：
+// homeTimelineOp 是 HomeTimeline 與 HomeLatestTimeline 的共用實作：兩操作
+// 對 X 端雙形態同構（D16；HomeLatestTimeline 依 P0' 實證——DECISIONS
+// 〈v1.1 P0' 探測〉節：GET 20/20、POST(cursor+seen) 20/20、零失敗、空
+// features），組裝與解析路徑完全一致，僅註冊表操作名不同。變數雙形態
+//（OQ3 裁決、DECISIONS D1、REQ-GQL-005）：
 //
 //   - 共同：count（數字）、includePromotedContent=true、withCommunity=true。
 //   - cursor 非空 → 加 cursor 變數。
@@ -221,8 +224,8 @@ func postUser(m map[string]any) User {
 // 語義；跨頁去重由呼叫端以 seenTweetIDs 累積，設計 §25）；User 亦以 UserID
 // 去重（首見順序）。缺 rest_id 的條目視為結構不符，靜默跳過——時間線容忍
 // 個別壞條目。Operation 以複製覆寫 Method，不變動註冊表共用值（並行安全）。
-func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
-	op, err := s.reg.Operation("HomeTimeline")
+func (s *Sender) homeTimelineOp(opName string, cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
+	op, err := s.reg.Operation(opName)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +238,7 @@ func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (
 	if cursor != "" {
 		cv, err := graphql.CompactJSON(cursor)
 		if err != nil {
-			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("HomeTimeline: cursor 序列化失敗: %v", err)}
+			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("%s: cursor 序列化失敗: %v", opName, err)}
 		}
 		vars = append(vars, graphql.Param{K: "cursor", V: string(cv)})
 	}
@@ -246,7 +249,7 @@ func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (
 	} else {
 		sv, err := graphql.CompactJSON(seenTweetIDs)
 		if err != nil {
-			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("HomeTimeline: seenTweetIds 序列化失敗: %v", err)}
+			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("%s: seenTweetIds 序列化失敗: %v", opName, err)}
 		}
 		vars = append(vars, graphql.Param{K: "seenTweetIds", V: string(sv)})
 		method = "POST" // REQ-GQL-005：query 型操作顯式覆寫為 POST
@@ -260,7 +263,7 @@ func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (
 	var root any
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &root); err != nil {
-			return nil, &xerrors.TransportError{Msg: fmt.Sprintf("HomeTimeline: 回應 data 解析失敗: %v", err)}
+			return nil, &xerrors.TransportError{Msg: fmt.Sprintf("%s: 回應 data 解析失敗: %v", opName, err)}
 		}
 	}
 	res := &TimelineResult{Cursor: ExtractCursor(root, "Bottom")}
@@ -295,6 +298,21 @@ func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (
 		}
 	}
 	return res, nil
+}
+
+// HomeTimeline 讀取首頁時間線（REQ-RD-001..004）並解析為 TimelineResult
+//（變數雙形態與解析語義見 homeTimelineOp——共用實作）。
+func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
+	return s.homeTimelineOp("HomeTimeline", cursor, count, seenTweetIDs)
+}
+
+// HomeLatestTimeline 與 HomeTimeline 同構（P0' 實證：GET 20/20、POST(seen)
+// 20/20、零失敗、空 features——DECISIONS〈v1.1 P0' 探測〉節；D16：雙形態
+// 同構 HomeTimeline）。形態分支與 HomeTimeline 完全一致：cursor=="" 且
+// seen 空 → GET 啟動形態；cursor 非空或 seen 非空 → POST 帶 seenTweetIds
+//（seen 置變數末，沿 HomeTimeline 的既有排序）。
+func (s *Sender) HomeLatestTimeline(cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
+	return s.homeTimelineOp("HomeLatestTimeline", cursor, count, seenTweetIDs)
 }
 
 // Viewer 讀取當前會話身分（REQ-RD 表 get_viewer）：op Viewer、variables
