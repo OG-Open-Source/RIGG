@@ -25,16 +25,16 @@ type fakeSession struct {
 	mu       sync.Mutex
 	calls    []string
 	lastSeen []string
-	validate func(cookie string) error
+	validate func(cookie string) (viewerInfo, error)
 	home     func(cursor string, seen []string) (*timelineResult, error)
 }
 
-func (f *fakeSession) Validate(cookie string) error {
+func (f *fakeSession) Validate(cookie string) (viewerInfo, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, "Validate")
 	f.mu.Unlock()
 	if f.validate == nil {
-		return nil
+		return viewerInfo{}, nil
 	}
 	return f.validate(cookie)
 }
@@ -98,10 +98,10 @@ func TestLoginView_ErrorMapping(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			a := newTestApp()
-			fake := &fakeSession{validate: func(string) error { return tc.err }}
+			fake := &fakeSession{validate: func(string) (viewerInfo, error) { return viewerInfo{}, tc.err }}
 			a.newSess = func() (xSession, error) { return fake, nil }
 			persisted := 0
-			a.onLoginPersist = func(xSession) error { persisted++; return nil }
+			a.onLoginPersist = func(xSession, viewerInfo, string) error { persisted++; return nil }
 			tt := ui.NewTester(a.view, 480, 360)
 			typeCookie(t, tt)
 			if err := tt.Click("登入"); err != nil {
@@ -138,7 +138,7 @@ func TestLoginView_Success(t *testing.T) {
 	fake := &fakeSession{} // validate 預設成功
 	a.newSess = func() (xSession, error) { return fake, nil }
 	persisted := 0
-	a.onLoginPersist = func(xSession) error { persisted++; return nil }
+	a.onLoginPersist = func(xSession, viewerInfo, string) error { persisted++; return nil }
 	tt := ui.NewTester(a.view, 480, 360)
 	typeCookie(t, tt)
 	if err := tt.Click("登入"); err != nil {
@@ -165,10 +165,10 @@ func TestLoginView_Debounce(t *testing.T) {
 	release := make(chan struct{})
 	var calls atomic.Int32
 	fake := &fakeSession{
-		validate: func(string) error {
+		validate: func(string) (viewerInfo, error) {
 			calls.Add(1)
 			<-release // 模擬驗證進行中
-			return nil
+			return viewerInfo{}, nil
 		},
 	}
 	a.newSess = func() (xSession, error) { return fake, nil }

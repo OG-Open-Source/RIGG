@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"log"
+	"slices"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -28,10 +29,10 @@ type app struct {
 	state *AppState
 
 	// —— 接縫注入點（測試替身；nil → 正式路徑）——
-	spawn          func(fn func(ctx context.Context)) // 背景工作派發
-	apply          func(fn func())                    // 主執行緒套用背景結果
-	newSess        func() (xSession, error)           // 會話建構
-	onLoginPersist func(sess xSession) error          // 登入成功首次落盤
+	spawn          func(fn func(ctx context.Context))                                // 背景工作派發
+	apply          func(fn func())                                                   // 主執行緒套用背景結果
+	newSess        func() (xSession, error)                                          // 會話建構
+	onLoginPersist func(sess xSession, info viewerInfo, cookieLine string) error     // 登入成功首次落盤
 
 	// —— bootstrap（startToken 結果；login 代理狀態列與錯誤區消費）——
 	proxy    string // 解析出的代理 URL（空＝尚未就緒）
@@ -103,16 +104,42 @@ func (a *app) startSession() (xSession, error) {
 	return newSession("", a.proxy)
 }
 
-// persistLogin 於登入成功後完成首次落盤（契約 2）：正式路徑經
-// AppState.Flush 冪等寫入（Save 失敗記於 AppState.Err，不阻擋登入）；
-// 測試注入記錄替身（錯誤路徑「未觸發任何落盤／清除」的斷言點）。
-func (a *app) persistLogin(sess xSession) error {
+// persistLogin 於登入成功後完成首次落盤（契約 2）：以 Validate 回傳的身分
+// 建 Account 落盤（REQ-WEB-069：身分與憑證綁定；REQ-WEB-070：同 UserID 再
+// 匯入＝saveAccount 覆蓋同鍵）、索引 Order 追加且 Current 指向該帳號，並
+// dualWrite 同步寫 v1 舊鍵（降級雙寫期）；其後正式路徑經 AppState.Flush 冪
+// 等寫入引擎憑證（Save 失敗記於 AppState.Err，不阻擋登入——帳號落盤錯誤
+// 同樣只向上回報、不阻擋登入）。測試注入記錄替身（錯誤路徑「未觸發任何
+// 落盤／清除」的斷言點）。
+func (a *app) persistLogin(sess xSession, info viewerInfo, cookieLine string) error {
 	if a.onLoginPersist != nil {
-		return a.onLoginPersist(sess)
+		return a.onLoginPersist(sess, info, cookieLine)
 	}
 	es, ok := sess.(*engineSession)
 	if !ok || es.auth == nil {
 		return nil // 替身會話：無引擎憑證可落盤
+	}
+	ctx := context.Background()
+	acc := Account{UserID: info.UserID, ScreenName: info.ScreenName, Name: info.Name, CookieLine: cookieLine}
+	if err := saveAccount(ctx, acc); err != nil {
+		return err
+	}
+	idx, err := loadIndex(ctx)
+	if err != nil {
+		return err
+	}
+	order := []string(nil)
+	if idx != nil {
+		order = idx.Order
+	}
+	if !slices.Contains(order, acc.UserID) {
+		order = append(order, acc.UserID)
+	}
+	if err := saveIndex(ctx, accountIndex{Version: accountIndexVersion, Order: order, Current: acc.UserID}); err != nil {
+		return err
+	}
+	if err := dualWrite(cookieLine); err != nil {
+		return err
 	}
 	a.state.Flush(es.auth)
 	return nil

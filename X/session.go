@@ -17,12 +17,14 @@ import (
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/transport"
 )
 
-// timelineResult／post 是引擎時間線型別的 app 層別名：view 與測試替身得以
-// 字面值構造（引擎型別本身為純資料結構；view 對引擎的唯一依賴面是
-// xSession 介面，別名不擴大依賴）。
+// timelineResult／post／viewerInfo 是引擎資料型別的 app 層別名：view 與
+// 測試替身得以字面值構造（引擎型別本身為純資料結構；view 對引擎的唯一
+// 依賴面是 xSession 介面，別名不擴大依賴）。viewerInfo 供 login 流以
+// Validate 回傳值建 Account（REQ-WEB-069：身分與憑證綁定）。
 type (
 	timelineResult = api.TimelineResult
 	post           = api.Post
+	viewerInfo     = api.ViewerInfo
 )
 
 // homePageSize 是每次翻頁的 count（契約 3：HomeTimeline(cursor, 20, seen)）。
@@ -53,8 +55,10 @@ var engineStore auth.CookieStore
 // 假實作注入（view 不直接依賴具體 engine 型別）。
 type xSession interface {
 	// Validate 解析單行 cookie（PrepareAuth）並以 Viewer 驗證身分
-	// （REQ-RD 表 get_viewer）；成功後會話即就緒（login 流）。
-	Validate(cookieLine string) error
+	// （REQ-RD 表 get_viewer）：成功回傳 Viewer 身分（login 流以此建
+	// Account，REQ-WEB-069），失敗原樣向上（kind 分類由 xerrors 型別
+	// 承載，絕不清除憑證）。
+	Validate(cookieLine string) (viewerInfo, error)
 	// Home 讀取一頁時間線：count 固定 homePageSize；seen 為已顯示
 	// work_id 累積（seenTweetIds，跨頁去重，Task 10 介面契約）。
 	Home(cursor string, seen []string) (*timelineResult, error)
@@ -69,8 +73,19 @@ type engineSession struct {
 // 編譯期斷言：engineSession 滿足接縫。
 var _ xSession = (*engineSession)(nil)
 
-// newSession 組裝引擎會話（brief 介面）。
+// newSession 以引擎接線的系統憑證庫儲存層（engineStore）組裝會話——
+// assembleSession 的薄包裝（login 流以空行起手，備料與驗證由
+// Validate(cookieLine) 完成）。
+func newSession(cookieLine, proxyURL string) (*engineSession, error) {
+	return assembleSession(cookieLine, proxyURL, engineStore)
+}
+
+// assembleSession 組裝引擎會話（preflight 裁決：newSession 本體重構為此形，
+// 供遷移等需指定 store 的呼叫端復用組裝鏈）：
 //
+//   - store 非 nil → 以 WithCookieStore 接入（Sender 回應 Set-Cookie 的
+//     write-through 落該儲存層）；nil → 不帶（遷移的臨時會話：只驗身分，
+//     不接 write-through 儲存層）。
 //   - cookieLine 非空 → 於組裝內 PrepareAuth（自動登入路徑，供未來以已存
 //     cookie 靜默續登；v1 未接線）。
 //   - cookieLine 為空 → 略過（login 流由 Validate(cookieLine) 完成備料與
@@ -79,11 +94,11 @@ var _ xSession = (*engineSession)(nil)
 // 代理語義（D10：正常用途直連，需求方 2026-11-13 裁決）：proxyURL 非空
 // 時 transport 經代理；空時以 AllowDirect 直連（OQ12 探測實證）。註冊表
 // 載入失敗回原錯——由 login 頁錯誤區呈現。
-func newSession(cookieLine, proxyURL string) (*engineSession, error) {
+func assembleSession(cookieLine, proxyURL string, store auth.CookieStore) (*engineSession, error) {
 	fp := fingerprint.Get()
 	opts := []auth.AuthOption(nil)
-	if engineStore != nil {
-		opts = []auth.AuthOption{auth.WithCookieStore(engineStore)}
+	if store != nil {
+		opts = []auth.AuthOption{auth.WithCookieStore(store)}
 	}
 	a := auth.NewAuth("", opts...) // bearer 空 → 預設公開 web bearer（REQ-AUTH-002）
 	if cookieLine != "" {
@@ -102,14 +117,14 @@ func newSession(cookieLine, proxyURL string) (*engineSession, error) {
 	return &engineSession{auth: a, sender: api.NewSender(tr, a, reg, fp)}, nil
 }
 
-// Validate 實作 xSession：PrepareAuth → Viewer。失敗原樣向上（kind 分類
-// 由 xerrors 型別承載，login 頁經 errorText 映射顯示，絕不清除憑證）。
-func (s *engineSession) Validate(cookieLine string) error {
+// Validate 實作 xSession：PrepareAuth → Viewer（回傳身分，login 流以之建
+// Account，REQ-WEB-069）。失敗原樣向上（kind 分類由 xerrors 型別承載，
+// login 頁經 errorText 映射顯示，絕不清除憑證）。
+func (s *engineSession) Validate(cookieLine string) (viewerInfo, error) {
 	if err := s.auth.PrepareAuth(cookieLine); err != nil {
-		return err
+		return viewerInfo{}, err
 	}
-	_, err := s.sender.Viewer()
-	return err
+	return s.sender.Viewer()
 }
 
 // Home 實作 xSession。
