@@ -32,12 +32,19 @@ func TestExtractQueryIDs(t *testing.T) {
 
 // TestSummarizeNoCookieLeak 驗證 summarize 的脫敏契約（REQ-INV-01）：含
 // cookie 值的 headers map 經 summarize 後，輸出絕不含值本身，且值以固定
-// 遮罩呈現、輸出仍為合法 JSON。
+// 遮罩呈現、輸出仍為合法 JSON；err 路徑同契約——錯誤字串內嵌 cookie 行
+// （或其值）時，輸出前必被遮除，不依賴引擎錯誤字串的內容。
 func TestSummarizeNoCookieLeak(t *testing.T) {
+	cookieLine := "auth_token=SECRET; ct0=ct0value"
 	headers := map[string]string{
-		"cookie": "auth_token=SECRET; ct0=ct0value",
+		"cookie": cookieLine,
 	}
-	out := summarize(headers, []probeReq{{Name: "latest.get", OK: true, Data: true}})
+	reqs := []probeReq{
+		{Name: "latest.get", OK: true, Data: true},
+		// err 路徑：人造錯誤字串內嵌完整 cookie 行，輸出不得含其任一值。
+		{Name: "latest.post-seen", Err: "Post \"https://x.com/i/api/graphql/HomeLatestTimeline\": 憑證被拒（" + cookieLine + "）"},
+	}
+	out := summarize(headers, cookieLine, reqs)
 	if strings.Contains(out, "SECRET") {
 		t.Fatalf("summarize 輸出含 cookie 值片段 SECRET：\n%s", out)
 	}

@@ -73,18 +73,26 @@ func extractQueryIDs(js string) map[string]string {
 
 // summarize 將請求數、各請求的 status/ok/data 佈林與請求標頭組成 JSON
 // 摘要字串：headers 值全數以固定遮罩取代（REQ-INV-01：輸出絕不含 cookie
-// 值；遮罩不保留長度）。Err 欄位沿用引擎錯誤字串（引擎依規格不在錯誤
-// 字串中置放憑證值）。輸出以兩格縮排、不轉義 HTML 字元。
-func summarize(headers map[string]string, reqs []probeReq) string {
+// 值；遮罩不保留長度）；Err 欄位輸出前先經 scrub 遮除 cookie 行與其各值
+// ——與 stderr 同一套輸出端結構性保險，不依賴引擎錯誤字串的內容。輸出
+// 以兩格縮排、不轉義 HTML 字元。
+func summarize(headers map[string]string, cookieLine string, reqs []probeReq) string {
 	masked := make(map[string]string, len(headers))
 	for k := range headers {
 		masked[k] = maskValue
+	}
+	clean := make([]probeReq, len(reqs))
+	for i, r := range reqs {
+		if r.Err != "" {
+			r.Err = scrub(r.Err, cookieLine)
+		}
+		clean[i] = r
 	}
 	out := struct {
 		Count    int               `json:"count"`
 		Requests []probeReq        `json:"requests"`
 		Headers  map[string]string `json:"headers,omitempty"`
-	}{Count: len(reqs), Requests: reqs, Headers: masked}
+	}{Count: len(reqs), Requests: clean, Headers: masked}
 	s, err := marshalJSON(out)
 	if err != nil {
 		// 欄位僅含 int／bool／string／map[string]string，序列化不會失敗；
@@ -233,7 +241,8 @@ func runLatest(s *probeSession) []probeReq {
 
 // newProbeReq 由一次 HomeTimeline 結果組摘要條目：ok＝無錯；data＝回應
 // 含貼文（「data 非空」的可觀測代理，對應 Task 2 判準「各回 200 且
-// data 非空」）；err 為引擎錯誤字串（不含憑證值）。
+// data 非空」）；err 為引擎錯誤字串（stdout 輸出前經 summarize scrub
+// 遮除憑證值，REQ-INV-01）。
 func newProbeReq(name string, res *api.TimelineResult, err error) probeReq {
 	req := probeReq{Name: name}
 	if err != nil {
@@ -265,7 +274,7 @@ func runLatestCmd() {
 	if err != nil {
 		failErr(cookieLine, err)
 	}
-	fmt.Println(summarize(probeHeaders(sess.auth, cookieLine), runLatest(sess)))
+	fmt.Println(summarize(probeHeaders(sess.auth, cookieLine), cookieLine, runLatest(sess)))
 }
 
 // runSearchIDCmd：searchid 子命令——自檔案路徑參數（"-" 為 stdin）或
