@@ -9,12 +9,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/OG-Open-Source/RIGG/X/internal/xapi/auth"
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/xerrors"
 )
 
@@ -254,5 +256,60 @@ func TestErrorText_KindMapping(t *testing.T) {
 		if got := errorText(tc.err); got != tc.want {
 			t.Errorf("%s: errorText = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestPersistLoginFlushesDespiteDualWriteFailure：dualWrite（降級次要寫）
+// 回錯 → persistLogin 仍回 nil、錯誤記於 AppState.Err（同 Flush 自記語義，
+// 不經回傳值落進 `_ =` 無聲消失），且其後的 AppState.Flush 無條件執行——
+// 引擎憑證首存（契約 2 主項）不遭次要寫失敗閘門；帳號模型（身分綁定＋
+// 索引指向）照常落盤，耐久性完整。Flush 觀測面用 recStore 替身；帳號寫
+// 走 accountService seam（測試專屬 service，絕不打真實預設）。
+func TestPersistLoginFlushesDespiteDualWriteFailure(t *testing.T) {
+	withAccountService(t)
+	cleanupSecrets(t, indexKey, accountKey("9100"))
+	ctx := context.Background()
+
+	const cookie = "auth_token=synthetic-9100; ct0=synthetic-9100b" // fixture 一律合成
+	a := newTestApp()
+	st := &recStore{rec: func(string) {}}
+	a.state = NewAppState(st)
+	authx := auth.NewAuth("")
+	if err := authx.PrepareAuth(cookie); err != nil {
+		t.Fatalf("PrepareAuth: %v", err)
+	}
+	sess := &engineSession{auth: authx}
+
+	// dualWrite seam 注入失敗替身（包級函式值形，同 migrateSessionFactory；
+	// t.Cleanup 還原）。
+	dualErr := errors.New("合成雙寫失敗")
+	origDual := dualWrite
+	dualWrite = func(string) error { return dualErr }
+	t.Cleanup(func() { dualWrite = origDual })
+
+	if err := a.persistLogin(sess, viewerInfo{UserID: "9100", ScreenName: "goated", Name: "合成帳號"}, cookie); err != nil {
+		t.Fatalf("persistLogin 應回 nil（錯誤記於 AppState.Err，不回傳），得 %v", err)
+	}
+
+	// 雙寫錯誤已記錄（不再無聲消失）。
+	if !errors.Is(a.state.Err, dualErr) {
+		t.Fatalf("dualWrite 失敗應記於 AppState.Err，得 %v", a.state.Err)
+	}
+
+	// Flush 仍被呼叫：引擎憑證行已 Save（契約 2 主項未被閘門）。
+	if st.saved == "" {
+		t.Fatal("dualWrite 失敗時 Flush 仍應寫入引擎憑證（契約 2 首存）")
+	}
+	if st.saved != authx.CookieHeader() {
+		t.Fatal("Flush 落盤內容應為引擎憑證行")
+	}
+
+	// 帳號模型照常落盤（雙寫失敗不影響主項序列）。
+	idx, err := loadIndex(ctx)
+	if err != nil {
+		t.Fatalf("loadIndex: %v", err)
+	}
+	if idx == nil || !slices.Equal(idx.Order, []string{"9100"}) || idx.Current != "9100" {
+		t.Fatalf("雙寫失敗時帳號索引應照常寫入，得 %+v", idx)
 	}
 }

@@ -75,8 +75,10 @@ func legacyCookieLine(ctx context.Context) (string, error) {
 
 // dualWrite 把活躍帳號的 cookie 行同步寫入 v1 舊鍵 x-cookie-line（降級
 // 雙寫期：v1.1 全程，二進位降級不丟會話；v1.2 移除雙寫時清理）。寫入經
-// accountService seam（正式＝MyGO 預設 service，同 v1 鍵作用域）。
-func dualWrite(activeCookieLine string) error {
+// accountService seam（正式＝MyGO 預設 service，同 v1 鍵作用域）。包級
+// 函式值形（同 migrateSessionFactory）：persistLogin 測試注入失敗替身，
+// 斷言雙寫錯誤不閘門引擎憑證首存。
+var dualWrite = func(activeCookieLine string) error {
 	st, err := newAccountStore(cookieLineKey)
 	if err != nil {
 		return err

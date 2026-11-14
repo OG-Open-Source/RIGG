@@ -82,8 +82,9 @@ func (a *app) submitLogin() {
 		if err == nil {
 			// 契約 2：首次落盤由 login 流完成（以身分建帳號＋dualWrite；
 			// 正式路徑經 AppState.Flush 冪等寫入；其後 Sender 的
-			// write-through 吸收輪替）。落盤失敗不阻擋登入——生命週期錯誤
-			// 由 Flush 記於 AppState.Err。
+			// write-through 吸收輪替）。落盤失敗不阻擋登入——帳號落盤／
+			// 雙寫／Flush 錯誤皆記於 AppState.Err（persistLogin 內，
+			// 同 Flush 自記語義）；正式路徑回 nil，`_ =` 只容測試替身。
 			_ = a.persistLogin(sess, info, cookie)
 		}
 		a.publish(func() {

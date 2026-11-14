@@ -108,9 +108,12 @@ func (a *app) startSession() (xSession, error) {
 // 建 Account 落盤（REQ-WEB-069：身分與憑證綁定；REQ-WEB-070：同 UserID 再
 // 匯入＝saveAccount 覆蓋同鍵）、索引 Order 追加且 Current 指向該帳號，並
 // dualWrite 同步寫 v1 舊鍵（降級雙寫期）；其後正式路徑經 AppState.Flush 冪
-// 等寫入引擎憑證（Save 失敗記於 AppState.Err，不阻擋登入——帳號落盤錯誤
-// 同樣只向上回報、不阻擋登入）。測試注入記錄替身（錯誤路徑「未觸發任何
-// 落盤／清除」的斷言點）。
+// 等寫入引擎憑證。錯誤一律記於 AppState.Err（setErr，同 Flush 自記語義：
+// 首錄不覆蓋）、不回傳不阻擋登入；Flush 無條件執行——契約 2 的引擎憑證
+// 首存（主項）不遭帳號寫／雙寫（降級次要項）錯誤閘門。帳號寫之間仍依序
+// 把關：帳號鍵未落盤或索引讀失敗即不寫索引（索引不得指向缺失帳號、不得
+// 以殘缺 Order 覆寫真源）。測試注入記錄替身（錯誤路徑「未觸發任何落盤／
+// 清除」的斷言點）。
 func (a *app) persistLogin(sess xSession, info viewerInfo, cookieLine string) error {
 	if a.onLoginPersist != nil {
 		return a.onLoginPersist(sess, info, cookieLine)
@@ -122,25 +125,25 @@ func (a *app) persistLogin(sess xSession, info viewerInfo, cookieLine string) er
 	ctx := context.Background()
 	acc := Account{UserID: info.UserID, ScreenName: info.ScreenName, Name: info.Name, CookieLine: cookieLine}
 	if err := saveAccount(ctx, acc); err != nil {
-		return err
-	}
-	idx, err := loadIndex(ctx)
-	if err != nil {
-		return err
-	}
-	order := []string(nil)
-	if idx != nil {
-		order = idx.Order
-	}
-	if !slices.Contains(order, acc.UserID) {
-		order = append(order, acc.UserID)
-	}
-	if err := saveIndex(ctx, accountIndex{Version: accountIndexVersion, Order: order, Current: acc.UserID}); err != nil {
-		return err
+		a.state.setErr(err)
+	} else if idx, err := loadIndex(ctx); err != nil {
+		a.state.setErr(err)
+	} else {
+		order := []string(nil)
+		if idx != nil {
+			order = idx.Order
+		}
+		if !slices.Contains(order, acc.UserID) {
+			order = append(order, acc.UserID)
+		}
+		if err := saveIndex(ctx, accountIndex{Version: accountIndexVersion, Order: order, Current: acc.UserID}); err != nil {
+			a.state.setErr(err)
+		}
 	}
 	if err := dualWrite(cookieLine); err != nil {
-		return err
+		a.state.setErr(err) // 訊息已含「migrate: 雙寫舊鍵失敗」前綴，不含 cookie 值（REQ-INV-01）
 	}
+	// Flush 無條件（契約 2 主項）：Save 失敗由 Flush 自記 AppState.Err。
 	a.state.Flush(es.auth)
 	return nil
 }
