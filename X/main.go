@@ -95,6 +95,15 @@ type app struct {
 	searchInput string
 	searchOpen  bool
 	searchQuery string
+
+	// —— 展開檢視（Task 13；設計 §8.6 播放器生命週期）——
+	// detail 是當前展開的貼文（nil＝無）；player 是單一活躍播放器
+	//（nil＝無——開新帖先 Close 舊的，收合／切換帳號經 closeDetail 釋
+	// 放）；dmedia 是大圖／播放器錯誤的載入狀態（detailView 消費，
+	// openDetail 起手歸零）。行為面見 view_detail.go。
+	detail *post
+	player player
+	dmedia detailMedia
 }
 
 // newApp 建構 app：生命週期狀態先以無儲存層起手（main 於 store 建構成功
@@ -344,7 +353,10 @@ func (a *app) runSwitch(ctx context.Context, userID string, snap switchSnapshot)
 		// 步驟 8：feeds 歸零（墓碑；三槽全數——posts/cursor/seen/list/
 		// busy/err/end 皆隨新槽歸零）並落回 For You，自動載入其首頁
 		// （CUJ：切換後呈現新帳號的 For You）。搜尋為 ephemeral：槽已
-		// 換新，檢視一併離開（searchOpen 復位）。
+		// 換新，檢視一併離開（searchOpen 復位）。展開檢視同理：舊帳號
+		// 的展開頁與其播放器一併釋放（§8.6 切換帳號 Close——殘留播放器
+		// ／detail 跨帳號即洩漏），detail 狀態歸零使在途大圖回寫落空。
+		a.closeDetail()
 		a.feeds = [3]*timelineState{{}, {}, {}}
 		a.activeFeed = feedForYou
 		a.searchOpen = false

@@ -23,6 +23,16 @@ const (
 	msgUnknown    = "發生錯誤，請重試"
 )
 
+// msgMedia／msgOpenExternal 是媒體失敗 UX（Task 13；設計 §8.6）：展開檢
+// 視的圖片下載／解碼或影片播放失敗（含 video.ErrUnsupported——Linux 無
+// GStreamer）呈固定文案＋外開連結。媒體 403/404 屬 app 層語義，不落引擎
+// 六 kind（Alternative 11 退路）——errorText 不涉本表；文案固定，不拼接
+// 錯誤原始訊息（REQ-INV-01 同形：無憑證材料可能）。
+const (
+	msgMedia        = "無法載入媒體"
+	msgOpenExternal = "在瀏覽器開啟"
+)
+
 // graphqlErrPrefix 是 credential 以外 GraphQL code 的文案前綴
 // （brief：「X 回應錯誤：<code>」）。
 const graphqlErrPrefix = "X 回應錯誤："

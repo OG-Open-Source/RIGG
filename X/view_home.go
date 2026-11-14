@@ -41,9 +41,33 @@ type timelineState struct {
 // homeEndText 是到底提示文案（契約 4）。
 const homeEndText = "已載入全部貼文"
 
-// homeView 繪製 home 畫面：tabs、標題列（載入中含 spinner）、錯誤橫幅、
-// 活躍 feed 的時間線列表與到底提示。
+// homeView 繪製 home 畫面：無展開貼文時為 feed（homeFeedView）；展開檢
+// 視開啟且窗寬 ≥1024 時右欄並列（feed｜detailView，Task 13 宿主形態）
+//——<1024 的 Router 頁形態屬 Task 14 佈局接線，本任務窄窗沿 feed 單欄
+//（展開狀態保留，Task 14 接線後呈現）。
 func (a *app) homeView(c *ui.Context) {
+	if a.detail == nil {
+		a.homeFeedView(c)
+		return
+	}
+	if w, _ := c.Size(); w < 1024 {
+		a.homeFeedView(c)
+		return
+	}
+	d := *a.detail // 幀內快照：收合按鈕於本幀歸零 detail 不影響本幀渲染
+	ui.Row(c).Fill().Children(func() {
+		ui.Column(c).Grow(1).Children(func() {
+			a.homeFeedView(c)
+		})
+		ui.Column(c).Width(detailPanelWidth).Background(c.Theme().Surface).Children(func() {
+			a.detailView(c, d)
+		})
+	})
+}
+
+// homeFeedView 繪製 feed 單欄：tabs、標題列（載入中含 spinner）、錯誤橫
+// 幅、活躍 feed 的時間線列表與到底提示。
+func (a *app) homeFeedView(c *ui.Context) {
 	t := c.Theme()
 	// wasSearch 是進框前的檢視狀態：本框 Enter 剛開啟的搜尋不被同框的
 	// 殘餘 tab 輸入關閉（關閉只對「已在檢視」的搜尋生效）。
@@ -103,10 +127,12 @@ func (a *app) homeView(c *ui.Context) {
 		}
 		// 時間線列表：work_id 去重合併（首見順序）後的已顯示貼文；顯示
 		// 欄位（衍生顯示字串）經 Sanitize 後上屏（契約 7）。列表狀態屬
-		// 該 feed（槽隔離——含捲動版位與 AtEnd 語義）。
+		// 該 feed（槽隔離——含捲動版位與 AtEnd 語義）。列主體可點（
+		// RowClicked）開啟展開檢視（Task 13）；列內的 Link／重試按鈕自
+		// 行收 clicks，不觸發開帖。
 		ui.List(c, &f.list, len(f.posts), func(i int) {
 			p := f.posts[i]
-			ui.Column(c).Padding(10, 16).Gap(4).Children(func() {
+			body := ui.Column(c).Padding(10, 16).Gap(4).Children(func() {
 				ui.Text(c, Sanitize("@"+p.ScreenName)).TextColor(t.TextMuted)
 				if p.Title != "" {
 					ui.Text(c, Sanitize(p.Title))
@@ -116,6 +142,9 @@ func (a *app) homeView(c *ui.Context) {
 				}
 				a.thumbRow(c, kind, f, p) // 縮圖格（僅含媒體貼文渲染；Task 12）
 			})
+			if body.RowClicked() {
+				a.openDetail(p) // 展開檢視入口（單一活躍播放器規則見 openDetail）
+			}
 		}).Grow(1)
 		// 到底提示：游標空（或與前頁相同）後顯示，且不再觸發翻頁。
 		if f.end {
