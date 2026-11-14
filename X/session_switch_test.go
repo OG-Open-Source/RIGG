@@ -65,7 +65,9 @@ func writeThrough(s *engineSession) {
 
 // TestNewSessionForUsesAccountKey：newSessionFor 以 x-account-<uid> 鍵建構
 // 儲存層（恰一次、非舊鍵），並將其接線進會話 Auth（write-through 落鍵的
-// 前提）。
+// 前提）。Task 6 起 store 為 newAccountCookieStore 的 adapter（鍵內容碰撞
+// 裁決）包於帳號鍵 store 之下——斷言面同步調整：以 write-through 經
+// adapter 落帳號鍵驗證接線（raw 行不得直寫帳號鍵）。
 func TestNewSessionForUsesAccountKey(t *testing.T) {
 	stores := withKeyedStores(t)
 
@@ -82,8 +84,12 @@ func TestNewSessionForUsesAccountKey(t *testing.T) {
 	if len(stores) != 1 {
 		t.Errorf("應恰建構 1 個 store，得到 %d", len(stores))
 	}
-	if sess.auth == nil || sess.auth.Store() != st {
-		t.Error("會話 Auth 應接線帳號鍵 store（write-through 落鍵前提）")
+	if sess.auth == nil || sess.auth.Store() == nil {
+		t.Fatal("會話 Auth 應接線帳號鍵 adapter（write-through 落鍵前提）")
+	}
+	writeThrough(sess)
+	if got := st.savedLines(); len(got) != 1 {
+		t.Errorf("write-through 應經 adapter 落帳號鍵恰一次，得到 %d", len(got))
 	}
 }
 

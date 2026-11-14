@@ -192,6 +192,135 @@ func TestAccountKeyFormat(t *testing.T) {
 	}
 }
 
+// —— accountCookieStore（Step 0，控制器裁決 2026-11-14：鍵內容碰撞）——
+//
+// auth.CookieStore（raw cookie 行）與 saveAccount（Account JSON）共用
+// x-account-<uid> 鍵；引擎 write-through 與 quit flush 必須經 adapter 讀寫
+// Account JSON 的 CookieLine 欄位，否則第一次 quit Flush 即以 raw 行覆蓋
+// Account JSON、loadAccounts 全清單 MaterialError。以下四測沿
+// accountTestService seam 隔離，fixture 一律合成。
+
+// TestAccountCookieStoreLoadReturnsLine：鍵缺失 → ("", nil)（沿
+// ErrSecretNotFound 語義）；saveAccount 後 Load 回 .CookieLine。
+func TestAccountCookieStoreLoadReturnsLine(t *testing.T) {
+	withAccountService(t)
+	cleanupSecrets(t, accountKey("5100"))
+	ctx := context.Background()
+
+	// 鍵缺失：("", nil)，非錯誤。
+	st := newAccountCookieStore("5100")
+	if line, err := st.Load(ctx); err != nil || line != "" {
+		t.Fatalf("鍵缺失時 Load 回 (%q, %v)，欲得 (\"\", nil)", line, err)
+	}
+
+	acc := Account{
+		UserID:     "5100",
+		ScreenName: "goated",
+		Name:       "合成帳號",
+		CookieLine: "auth_token=synthetic-5100; ct0=synthetic-5100b", // fixture 一律合成
+	}
+	if err := saveAccount(ctx, acc); err != nil {
+		t.Fatalf("saveAccount: %v", err)
+	}
+	line, err := st.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if line != acc.CookieLine {
+		t.Fatalf("Load 回 %q，欲得帳號的 CookieLine %q", line, acc.CookieLine)
+	}
+}
+
+// TestAccountCookieStoreSavePreservesMetadata：saveAccount{ScreenName:"a"}
+// → Save(newline) → loadAccounts 回 ScreenName=="a" 且 CookieLine=="newline"
+// （read-modify-write 僅更新 CookieLine 欄位，中繼資料不滅）。
+func TestAccountCookieStoreSavePreservesMetadata(t *testing.T) {
+	withAccountService(t)
+	cleanupSecrets(t, indexKey, accountKey("5101"))
+	ctx := context.Background()
+
+	if err := saveAccount(ctx, Account{UserID: "5101", ScreenName: "a", CookieLine: "auth_token=old; ct0=oldb"}); err != nil {
+		t.Fatalf("saveAccount: %v", err)
+	}
+	if err := saveIndex(ctx, accountIndex{Version: accountIndexVersion, Order: []string{"5101"}, Current: "5101"}); err != nil {
+		t.Fatalf("saveIndex: %v", err)
+	}
+
+	st := newAccountCookieStore("5101")
+	if err := st.Save(ctx, "auth_token=new; ct0=newb"); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	accs, _, err := loadAccounts(ctx)
+	if err != nil {
+		t.Fatalf("loadAccounts: %v", err)
+	}
+	if len(accs) != 1 {
+		t.Fatalf("loadAccounts 回 %d 帳號，欲得 1", len(accs))
+	}
+	if accs[0].ScreenName != "a" {
+		t.Errorf("Save 後中繼資料應保留：ScreenName = %q，欲得 %q", accs[0].ScreenName, "a")
+	}
+	if accs[0].CookieLine != "auth_token=new; ct0=newb" {
+		t.Errorf("Save 後 CookieLine = %q，欲得 %q", accs[0].CookieLine, "auth_token=new; ct0=newb")
+	}
+}
+
+// TestAccountCookieStoreSaveOnMissingKeyCreatesMinimal：無鍵 Save → 最小
+// 重建 Account{UserID, CookieLine}（documented trade-off：憑證輪替不可被
+// 中繼資料損毀／缺失阻斷）。
+func TestAccountCookieStoreSaveOnMissingKeyCreatesMinimal(t *testing.T) {
+	withAccountService(t)
+	cleanupSecrets(t, indexKey, accountKey("5102"))
+	ctx := context.Background()
+
+	// 索引存在並引用該帳號，帳號鍵缺失（loadAccounts 可見的最小狀態）。
+	if err := saveIndex(ctx, accountIndex{Version: accountIndexVersion, Order: []string{"5102"}, Current: "5102"}); err != nil {
+		t.Fatalf("saveIndex: %v", err)
+	}
+
+	st := newAccountCookieStore("5102")
+	if err := st.Save(ctx, "auth_token=new; ct0=newb"); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	accs, _, err := loadAccounts(ctx)
+	if err != nil {
+		t.Fatalf("loadAccounts: %v", err)
+	}
+	want := Account{UserID: "5102", CookieLine: "auth_token=new; ct0=newb"}
+	if len(accs) != 1 || accs[0] != want {
+		t.Fatalf("loadAccounts 回 %+v，欲得最小重建 [%+v]", accs, want)
+	}
+}
+
+// TestAccountCookieStoreLoadCorruptIsMaterial：手寫壞 JSON 入鍵 → Load 回
+// MaterialError（讀路徑的中繼資料損毀必須浮現，同 loadAccounts 語義；
+// 錯誤字串不含內容片段，REQ-INV-01）。
+func TestAccountCookieStoreLoadCorruptIsMaterial(t *testing.T) {
+	withAccountService(t)
+	cleanupSecrets(t, accountKey("5103"))
+	ctx := context.Background()
+
+	raw, err := NewCookieStore(accountTestService, accountKey("5103"))
+	if err != nil {
+		t.Fatalf("NewCookieStore: %v", err)
+	}
+	if err := raw.Save(ctx, "{這不是 JSON"); err != nil {
+		t.Fatalf("寫入損毀夾具: %v", err)
+	}
+
+	st := newAccountCookieStore("5103")
+	if line, err := st.Load(ctx); err == nil {
+		t.Fatalf("損毀 JSON 的 Load 應回錯，卻得 (%q, nil)", line)
+	} else {
+		var material *xerrors.MaterialError
+		if !errors.As(err, &material) {
+			t.Fatalf("錯誤 %v 應為 material 語義（*xerrors.MaterialError）", err)
+		}
+	}
+}
+
 // TestLoadAccountsMissingAccountKey 驗索引存在但帳號鍵缺失時 loadAccounts
 // 回 material 錯誤（不靜默跳過；帳號資料絕不靜默清空）。
 func TestLoadAccountsMissingAccountKey(t *testing.T) {

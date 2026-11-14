@@ -12,7 +12,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
 
+	"github.com/OG-Open-Source/RIGG/X/internal/xapi/auth"
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/xerrors"
 )
 
@@ -97,7 +100,7 @@ func loadAccounts(ctx context.Context) ([]Account, accountIndex, error) {
 }
 
 // loadIndex 讀回帳號索引；索引不存在回 (nil, nil)——由呼叫端決定語義
-//（loadAccounts 視為空清單，deleteAccount 視為無索引可除名）。
+// （loadAccounts 視為空清單，deleteAccount 視為無索引可除名）。
 func loadIndex(ctx context.Context) (*accountIndex, error) {
 	st, err := newAccountStore(indexKey)
 	if err != nil {
@@ -154,7 +157,7 @@ func saveIndex(ctx context.Context, idx accountIndex) error {
 }
 
 // deleteAccount 刪帳號鍵並自索引除名；被刪者為 Current 時 Current 歸空
-//（移除活躍帳號導回 login 由呼叫端接線）。索引不存在時僅刪帳號鍵。
+// （移除活躍帳號導回 login 由呼叫端接線）。索引不存在時僅刪帳號鍵。
 // 帳號鍵或索引原本就不存在皆不視為錯誤（冪等）。
 func deleteAccount(ctx context.Context, userID string) error {
 	st, err := newAccountStore(accountKey(userID))
@@ -182,4 +185,137 @@ func deleteAccount(ctx context.Context, userID string) error {
 	}
 	idx.Order = kept
 	return saveIndex(ctx, *idx)
+}
+
+// accountCookieStore 以帳號鍵包裝 auth.CookieStore 的 app 層 adapter
+// （控制器裁決 2026-11-14：鍵內容碰撞）。auth.CookieStore 寫 raw cookie 行、
+// saveAccount 寫 Account JSON，兩者共用 x-account-<uid> 鍵——引擎
+// write-through 與 quit flush 未經本 adapter 時，第一次落盤即以 raw 行
+// 覆蓋 Account JSON，loadAccounts 全清單 MaterialError。本 adapter 把
+// raw 行讀寫收斂為 Account JSON 的 CookieLine 欄位讀寫：
+//
+//   - Load：讀 secret → Unmarshal Account JSON → 回 .CookieLine。鍵缺失 →
+//     ("", nil)（沿底層 ErrSecretNotFound 語義）；JSON 損毀 → MaterialError
+//     （讀路徑的中繼資料損毀必須浮現，同 loadAccounts；錯誤字串不含內容
+//     片段，REQ-INV-01）。
+//   - Save：read-modify-write——讀回現值（缺失或損毀 → 最小重建
+//     Account{UserID, CookieLine: line}——憑證輪替不可被中繼資料缺失或
+//     損毀阻斷，documented trade-off），僅更新 .CookieLine 後寫回。寫回值
+//     恆為 Account JSON，不觸發底層「空行＝刪除」語義。
+//   - Delete：刪鍵。
+//
+// 內部走 newStore(accountService, accountKey(userID))——即
+// newAccountStore 的帳號鍵建構路徑經 newStore seam（T5 的記錄器替身測試
+// 由此注入；adapter 包於 seam 之下，seam 本體保留）。鍵恆帶 x-account-
+// 前綴不為空，建構錯誤（僅空鍵可能）於首次操作時原樣向上，不靜默吞。
+type accountCookieStore struct {
+	userID   string
+	inner    auth.CookieStore // 帳號鍵底層儲存層
+	buildErr error            // 底層建構錯誤（首次操作時原樣向上）
+}
+
+// 編譯期斷言：accountCookieStore 實作引擎 write-through 的儲存層介面。
+var _ auth.CookieStore = (*accountCookieStore)(nil)
+
+// newAccountCookieStore 建構指定帳號的 adapter store（見型別註解）。
+func newAccountCookieStore(userID string) auth.CookieStore {
+	inner, err := newStore(accountService, accountKey(userID))
+	return &accountCookieStore{userID: userID, inner: inner, buildErr: err}
+}
+
+// Load 實作 auth.CookieStore：回帳號 JSON 的 .CookieLine（見型別註解）。
+func (s *accountCookieStore) Load(ctx context.Context) (string, error) {
+	if s.buildErr != nil {
+		return "", s.buildErr
+	}
+	raw, err := s.inner.Load(ctx)
+	if err != nil || raw == "" {
+		return "", err // 鍵缺失（"", nil）或底層讀取錯誤原樣向上
+	}
+	var acc Account
+	if err := json.Unmarshal([]byte(raw), &acc); err != nil {
+		// 損毀 JSON 的解析錯誤可能引述內容片段，不納入錯誤字串（REQ-INV-01）。
+		return "", &xerrors.MaterialError{Msg: fmt.Sprintf("帳號 %s 資料無法讀取（系統憑證庫）", s.userID)}
+	}
+	return acc.CookieLine, nil
+}
+
+// Save 實作 auth.CookieStore：read-modify-write 僅更新 .CookieLine（見
+// 型別註解）。
+func (s *accountCookieStore) Save(ctx context.Context, line string) error {
+	if s.buildErr != nil {
+		return s.buildErr
+	}
+	raw, err := s.inner.Load(ctx)
+	if err != nil {
+		return err
+	}
+	acc := Account{UserID: s.userID, CookieLine: line} // 缺失或損毀 → 最小重建
+	if raw != "" {
+		var cur Account
+		if err := json.Unmarshal([]byte(raw), &cur); err == nil {
+			cur.CookieLine = line
+			acc = cur
+		}
+	}
+	b, err := json.Marshal(acc)
+	if err != nil {
+		return fmt.Errorf("accounts: 序列化帳號 %s: %w", s.userID, err)
+	}
+	if err := s.inner.Save(ctx, string(b)); err != nil {
+		return fmt.Errorf("accounts: 寫入帳號 %s: %w", s.userID, err)
+	}
+	return nil
+}
+
+// Delete 刪除帳號鍵（登出／移除流程用；底層實作皆載 Delete）。
+func (s *accountCookieStore) Delete() error {
+	if s.buildErr != nil {
+		return s.buildErr
+	}
+	if d, ok := s.inner.(interface{ Delete() error }); ok {
+		if err := d.Delete(); err != nil {
+			return fmt.Errorf("accounts: 刪除帳號 %s: %w", s.userID, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("accounts: 帳號 %s 的底層儲存層不支援刪除", s.userID)
+}
+
+// verifyTTL 是憑證有效性快取的存活時間（§8.5：TTL 內切換免重驗——需求方
+// 「降低取得次數、加快切換」）。
+const verifyTTL = 10 * time.Minute
+
+// credCache 是憑證有效性 TTL 快取：user_id → 最後驗證時刻。切換序列於
+// TTL 內跳過 Validate（§8.4 步驟 5）；驗證成功 mark、失敗 invalidate。
+// 零值可用（mark 惰性建表）；全方法併發安全（mutex——切換於背景
+// goroutine 執行）。
+type credCache struct {
+	mu       sync.Mutex
+	verified map[string]time.Time
+}
+
+// fresh 回該帳號憑證是否仍在 TTL 內（從未驗證或已過期回 false）。
+func (c *credCache) fresh(userID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t, ok := c.verified[userID]
+	return ok && time.Since(t) < verifyTTL
+}
+
+// mark 記錄驗證成功時刻（TTL 起算點）。
+func (c *credCache) mark(userID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.verified == nil {
+		c.verified = make(map[string]time.Time)
+	}
+	c.verified[userID] = time.Now()
+}
+
+// invalidate 清除驗證記錄（切換驗證失敗時——下次切換強制重驗）。
+func (c *credCache) invalidate(userID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.verified, userID)
 }

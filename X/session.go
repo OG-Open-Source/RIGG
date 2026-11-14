@@ -51,7 +51,18 @@ func registryPath() string {
 // newStore 是帳號儲存層的建構 seam（§8.3 寫回帳號化）：正式路徑走
 // NewCookieStore（service 空字串＝MyGO 預設 app identifier service）；測試
 // 以記錄器覆寫隔離（session_switch_test.go），絕不打真實預設 service。
+// Task 6 起 newSessionFor 經 newAccountCookieStore（鍵內容碰撞裁決的
+// adapter）使用本 seam——adapter 包於 seam 之下，raw 行讀寫收斂為
+// Account JSON 的 CookieLine 讀寫。
 var newStore = func(service, key string) (auth.CookieStore, error) { return NewCookieStore(service, key) }
+
+// switchSessionFactory 是切換序列的會話工廠 seam（§8.4 步驟 4）：正式路徑
+// newSessionFor（帳號鍵 adapter 儲存層）；測試注入替身（switch_test.go），
+// 絕不組真實引擎鏈／打真實網路。包級函式值形（同 migrateSessionFactory、
+// dualWrite；t.Cleanup 還原）。
+var switchSessionFactory = func(acc Account, proxyURL string) (xSession, error) {
+	return newSessionFor(acc, proxyURL)
+}
 
 // xSession 是 view↔engine 的窄接縫：login/home view 僅依賴本介面，測試以
 // 假實作注入（view 不直接依賴具體 engine 型別）。
@@ -64,6 +75,9 @@ type xSession interface {
 	// Home 讀取一頁時間線：count 固定 homePageSize；seen 為已顯示
 	// work_id 累積（seenTweetIds，跨頁去重，Task 10 介面契約）。
 	Home(cursor string, seen []string) (*timelineResult, error)
+	// Close 釋放會話資源（transport 收斂；冪等）：switchTo 步驟 6 於舊
+	// 會話替換前呼叫（設計 §8.4——簡報 §1.3 實測根因）。
+	Close() error
 }
 
 // engineSession 是 xSession 的正式實作：小結構體包 auth＋sender，並持有
@@ -95,17 +109,14 @@ func (s *engineSession) Close() error {
 }
 
 // newSessionFor 以帳號組裝會話（§8.3 寫回帳號化；設計 §8.4 會話工廠）：
-// 以該帳號專屬的儲存層（x-account-<user_id> 鍵、MyGO 預設 service）經
-// WithCookieStore 接入 Auth——Sender 回應 Set-Cookie 的同步 write-through
-// 落活躍帳號鍵、絕不覆蓋他帳（Review Focus 2）；PrepareAuth(acc.CookieLine)
-// 完成備料（cookie 行已知）。其餘鏈路同 assembleSession。儲存層建構失敗
-// 原樣向上。
+// 以該帳號專屬的 adapter 儲存層（x-account-<user_id> 鍵經
+// newAccountCookieStore——Task 6 鍵內容碰撞裁決：write-through 的 raw 行
+// 收斂為 Account JSON 的 CookieLine 讀寫，不得覆蓋中繼資料）接入 Auth——
+// Sender 回應 Set-Cookie 的同步 write-through 落活躍帳號鍵、絕不覆蓋
+// 他帳（Review Focus 2）；PrepareAuth(acc.CookieLine) 完成備料（cookie 行
+// 已知）。其餘鏈路同 assembleSession。儲存層建構失敗原樣向上。
 func newSessionFor(acc Account, proxyURL string) (*engineSession, error) {
-	store, err := newStore("", accountKey(acc.UserID))
-	if err != nil {
-		return nil, err
-	}
-	return assembleSession(acc.CookieLine, proxyURL, store)
+	return assembleSession(acc.CookieLine, proxyURL, newAccountCookieStore(acc.UserID))
 }
 
 // assembleSession 組裝引擎會話（組裝鏈唯一本體：login 流與 newSessionFor

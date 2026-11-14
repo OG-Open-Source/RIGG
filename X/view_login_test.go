@@ -22,11 +22,13 @@ import (
 
 // fakeSession 是 xSession 的測試替身：逐呼叫記錄名稱（契約 1 的「未觸發
 // 清除」以呼叫日誌驗證：錯誤路徑只允許 Validate 一類呼叫），validate／
-// home 依注入腳本回應（nil 腳本＝成功／空頁）。
+// home 依注入腳本回應（nil 腳本＝成功／空頁）。userID 攜帶身分供切換
+// 斷言（switch_test.go）；Close 為介面擴充後的 stub（呼叫計入日誌）。
 type fakeSession struct {
 	mu       sync.Mutex
 	calls    []string
 	lastSeen []string
+	userID   string
 	validate func(cookie string) (viewerInfo, error)
 	home     func(cursor string, seen []string) (*timelineResult, error)
 }
@@ -52,6 +54,13 @@ func (f *fakeSession) Home(cursor string, seen []string) (*timelineResult, error
 	return f.home(cursor, seen)
 }
 
+func (f *fakeSession) Close() error {
+	f.mu.Lock()
+	f.calls = append(f.calls, "Close")
+	f.mu.Unlock()
+	return nil
+}
+
 // callLog 回呼叫名稱日誌的快照。
 func (f *fakeSession) callLog() []string {
 	f.mu.Lock()
@@ -69,7 +78,7 @@ func (f *fakeSession) seenOf() []string {
 // newTestApp 組裝測試用 app：spawn／apply 同步執行（與測試同一 goroutine，
 // 無併發；防抖測試另行注入非同步 spawn）、無儲存層、無 bootstrap。
 func newTestApp() *app {
-	a := &app{state: NewAppState(nil)}
+	a := newApp()
 	a.spawn = func(fn func(ctx context.Context)) { fn(context.Background()) }
 	a.apply = func(fn func()) { fn() }
 	return a

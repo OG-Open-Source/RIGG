@@ -3,8 +3,8 @@
 // 階段（D6：代理於啟動解析、fail-closed，不存在執行期素材切換）。
 // MyGO quit handler（0.9.0：OS 結束會話時 OnBeforeQuit 傾聽者須同步完成）
 // 註冊同一 flush：Flush 即得以回呼參數注入的單元，main 側日後以
-// mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { state.Flush(auth) }) 註冊，
-// 本任務不觸碰 mygo 套件接線。
+// mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { state.Flush(auth, store) })
+// 註冊（活躍帳號儲存層以參數指入，Task 6）。
 package main
 
 import (
@@ -73,6 +73,18 @@ func (s *AppState) Go(fn func(ctx context.Context)) {
 	}()
 }
 
+// GoSession 以指定的會話 context 子樹跑一段背景工作並計入收斂（§8.4 世代
+// 邊界）：與 Go 同收斂語義（Close 等其結束後才 flush），但 ctx 由呼叫端
+// 供給——活躍會話子樹（state.ctx 的子樹，app 側建立並於會話確立時重建；
+// switchTo 步驟 3 以 sessCancel 斬斷在途，Close 經父 ctx 收斂）。
+func (s *AppState) GoSession(ctx context.Context, fn func(ctx context.Context)) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		fn(ctx)
+	}()
+}
+
 // Advance 推進階段：StageProxy → StageCredential → Ready。Err 非零時
 // 不前進（帶錯誤的階段由呼叫端處置；每段錯誤態獨立，不自動跳過）。
 // Ready 後再 Advance 為無操作。
@@ -97,7 +109,9 @@ func (s *AppState) setErr(err error) {
 
 // Flush 將 Auth 當前 cookie 行與儲存層比對，僅於有未落盤變更時 Save
 // （Sender 的 write-through 已落盤者不重寫）。此即 MyGO quit handler
-// 註冊的同一 flush：以回呼參數注入（見檔頭）。行為：
+// 註冊的同一 flush：以回呼參數注入（見檔頭）。st 為本次 flush 的目標
+// 儲存層（Task 6 正規化：目標以參數傳入，不再暫替 s.store——暫替不復原
+// 的不確定性消除）；nil 時沿 s.store（v1 舊鍵，降級雙寫期）。行為：
 //
 //   - 無儲存層、無 Auth 或當前行為空（未 Prepare）→ 不做事；
 //   - 儲存層讀回失敗視同「有未落盤變更」，仍嘗試 Save（冪等寫）；
@@ -106,8 +120,11 @@ func (s *AppState) setErr(err error) {
 //
 // 於 Close 內呼叫時 ctx 已取消，flush 另以 WithoutCancel 短逾時 context
 // 進行。
-func (s *AppState) Flush(a *xapi.Auth) {
-	if s.store == nil || a == nil {
+func (s *AppState) Flush(a *xapi.Auth, st xapi.CookieStore) {
+	if st == nil {
+		st = s.store
+	}
+	if st == nil || a == nil {
 		return
 	}
 	line := a.CookieHeader()
@@ -116,11 +133,11 @@ func (s *AppState) Flush(a *xapi.Auth) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), flushTimeout)
 	defer cancel()
-	stored, err := s.store.Load(ctx)
+	stored, err := st.Load(ctx)
 	if err == nil && stored == line {
 		return // 已落盤
 	}
-	if err := s.store.Save(ctx, line); err != nil {
+	if err := st.Save(ctx, line); err != nil {
 		s.setErr(fmt.Errorf("生命週期 flush 失敗: %w", err))
 	}
 }
@@ -131,7 +148,7 @@ func (s *AppState) Flush(a *xapi.Auth) {
 func (s *AppState) Close(a *xapi.Auth) {
 	s.cancel()
 	s.wg.Wait()
-	s.Flush(a)
+	s.Flush(a, nil) // 收斂 flush 沿既有目標（v1 舊鍵；quit 另以參數指活躍帳號）
 	if c, ok := s.store.(interface{ Close() error }); ok {
 		if err := c.Close(); err != nil {
 			s.setErr(fmt.Errorf("關閉儲存層失敗: %w", err))

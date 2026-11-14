@@ -64,18 +64,24 @@ func (a *app) homeView(c *ui.Context) {
 
 // loadMore 載入下一頁（或首頁）：防抖與終止閘門（busy／已到底／有未處置
 // 錯誤／無會話）→ 背景呼叫接縫 Home（契約 3：HomeTimeline(cursor, 20,
-// seen)）→ 經 publish 回 UI 執行緒套用。錯誤只設 homeErr（橫幅呈現），
-// 既有列表原樣（契約 5）。
+// seen)）→ 經 publish 回 UI 執行緒套用。背景工作以會話子樹派發
+// （goSession，§8.4），起跑前捕捉世代（gen）並於回寫前比對——切換後
+// （gen 已變）的舊帳號 publish 整批丟棄，不得污染新帳號畫面（D18 世代
+// 邊界雙保險：cancel 斬在途、gen 防已回程；Review Focus 1）。錯誤只設
+// homeErr（橫幅呈現），既有列表原樣（契約 5）。
 func (a *app) loadMore() {
 	if a.homeBusy || a.end || a.homeErr != nil || a.sess == nil {
 		return
 	}
 	a.homeBusy = true
 	a.homeErr = nil
-	sess, cursor, seen := a.sess, a.cursor, a.seen
-	a.goAsync(func(ctx context.Context) {
+	sess, cursor, seen, gen := a.sess, a.cursor, a.seen, a.gen
+	a.goSession(func(ctx context.Context) {
 		res, err := sess.Home(cursor, seen)
 		a.publish(func() {
+			if gen != a.gen {
+				return // 世代過期：舊帳號結果不得污染新帳號畫面（墓碑已歸零）
+			}
 			a.homeBusy = false
 			if err != nil {
 				a.homeErr = err // 既有列表原樣；由重試入口或近底捲動再觸發
