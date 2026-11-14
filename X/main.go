@@ -1,6 +1,6 @@
 // X 桌面 app 入口（MyGO 原生 UI）：視窗內容在 login 與 home 兩個 view 間
 // 分流，啟動鏈預熱（startToken：代理解析→註冊表預載）與 quit flush。引擎
-// 接縫（xSession／newSession）見 session.go；錯誤文案映射見 messages.go；
+// 接縫（xSession／newSessionFor）見 session.go；錯誤文案映射見 messages.go；
 // 畫面見 view_login.go／view_home.go。
 package main
 
@@ -48,6 +48,11 @@ type app struct {
 	sess xSession
 	auth *auth.Auth // 當前引擎會話的 XAuth（quit flush 用；engineSession 時設置）
 
+	// activeStore 是當前活躍帳號的憑證庫儲存層（quit flush 目標；§8.3 寫回
+	// 帳號化，Task 6 切換序列替換）。nil ⇒ quit flush 沿用 AppState 既有
+	// 儲存層（login 流尚無帳號、雙寫期的 v1 行為）。
+	activeStore auth.CookieStore
+
 	// —— home 畫面狀態 ——
 	posts    []post   // 已顯示貼文（work_id 去重、首見順序）
 	cursor   string   // 下一頁游標（空＝已到底）
@@ -94,14 +99,15 @@ func (a *app) publish(fn func()) {
 	fn()
 }
 
-// startSession 經接縫建構新會話：正式路徑 newSession（login 流以空行組裝，
-// 備料與驗證由 Validate 完成）；測試注入替身。組裝錯誤（代理 fail-closed、
-// 註冊表載入）由 login 頁錯誤區呈現。
+// startSession 經接縫建構新會話：正式路徑 assembleSession（login 流此時
+// 尚無 Account——空行、不接儲存層組裝，備料與驗證由 Validate 完成，帳號
+// 確立後的活躍儲存層接線屬 Task 6 切換序列）；測試注入替身。組裝錯誤
+// （代理 fail-closed、註冊表載入）由 login 頁錯誤區呈現。
 func (a *app) startSession() (xSession, error) {
 	if a.newSess != nil {
 		return a.newSess()
 	}
-	return newSession("", a.proxy)
+	return assembleSession("", a.proxy, nil)
 }
 
 // persistLogin 於登入成功後完成首次落盤（契約 2）：以 Validate 回傳的身分
@@ -177,16 +183,25 @@ func (a *app) startToken() {
 
 func main() {
 	a := newApp()
+	// v1 舊鍵儲存層（降級雙寫期）仍為 AppState 的 flush 目標（persistLogin
+	// 契約 2 主項冪等寫與 Close 收斂）。engineStore 全域已廢（§8.3 寫回
+	// 帳號化：per-account store 於 newSessionFor 內建構，write-through 直落
+	// 活躍帳號鍵）。
 	store, err := NewCookieStore("", cookieLineKey)
 	if err != nil {
 		a.startErr = err // 儲存層不可用：login 頁錯誤區呈現（fail-closed）
 	} else {
-		engineStore = store
 		a.state = NewAppState(store)
 	}
 	// quit handler：同步 flush（OnBeforeQuit 須於回呼內完成，含 OS 結束
-	// 會話的 SessionEnding）；僅落盤、絕不清除（REQ-LOG-042/043）。
+	// 會話的 SessionEnding）；僅落盤、絕不清除（REQ-LOG-042/043）。目標為
+	// 活躍帳號的儲存層（§8.3 寫回帳號化；Task 6 切換時替換 activeStore）：
+	// 暫替 AppState 儲存層後沿用 Flush 語義（冪等、錯誤記 AppState.Err）；
+	// 活躍帳號未確立（nil）時維持 AppState 既有目標（v1 舊鍵，降級雙寫期）。
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+		if a.activeStore != nil {
+			a.state.store = a.activeStore
+		}
 		a.state.Flush(a.auth)
 	})
 	mygo.App.WhenReady(func() {

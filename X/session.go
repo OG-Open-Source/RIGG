@@ -1,14 +1,17 @@
 // session：view↔engine 接縫（設計 §3.3 的 app 層 Session 構造）。view 僅
 // 依賴 xSession 介面（測試以 fakeSession 注入，見 view_login_test.go）；
-// engineSession 為唯一正式實作，由 newSession 依 brief 鏈組裝：
+// engineSession 為唯一正式實作，由 assembleSession 依 brief 鏈組裝：
 // fingerprint.Get() → auth.NewAuth(bearer, WithCookieStore) →（非空行時）
 // PrepareAuth(cookieLine) → graphql.LoadRegistry(註冊表快照) →
-// transport.New(fp, Options{ProxyURL}) → api.NewSender。
+// transport.New(fp, Options{ProxyURL}) → api.NewSender。帳號路徑以
+// newSessionFor 組裝（per-account store 接入 write-through，§8.3 寫回
+// 帳號化）；login 流此時尚無 Account，逕以 assembleSession 組裝。
 package main
 
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/api"
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/auth"
@@ -45,11 +48,10 @@ func registryPath() string {
 	return filepath.Join("static", "graphql.json")
 }
 
-// engineStore 是引擎接線的系統憑證庫儲存層：main 於啟動時指派
-// （NewCookieStore），newSession 以 WithCookieStore 接入——Sender 回應
-// Set-Cookie 的同步 write-through（Task 9）與 login 流的首次 Save（契約 2）
-// 共用同一儲存層。引擎自身不主動 Save（REQ-AUTH-002）。
-var engineStore auth.CookieStore
+// newStore 是帳號儲存層的建構 seam（§8.3 寫回帳號化）：正式路徑走
+// NewCookieStore（service 空字串＝MyGO 預設 app identifier service）；測試
+// 以記錄器覆寫隔離（session_switch_test.go），絕不打真實預設 service。
+var newStore = func(service, key string) (auth.CookieStore, error) { return NewCookieStore(service, key) }
 
 // xSession 是 view↔engine 的窄接縫：login/home view 僅依賴本介面，測試以
 // 假實作注入（view 不直接依賴具體 engine 型別）。
@@ -64,24 +66,50 @@ type xSession interface {
 	Home(cursor string, seen []string) (*timelineResult, error)
 }
 
-// engineSession 是 xSession 的正式實作：小結構體包 auth＋sender。
+// engineSession 是 xSession 的正式實作：小結構體包 auth＋sender，並持有
+// transport 以供 Close 收斂（client.go:168 既有 API 的 app 層接線）。
 type engineSession struct {
-	auth   *auth.Auth
-	sender *api.Sender
+	auth      *auth.Auth
+	sender    *api.Sender
+	tr        *transport.Client
+	closeOnce sync.Once // Close 冪等：transport 釋放僅執行一次
 }
 
 // 編譯期斷言：engineSession 滿足接縫。
 var _ xSession = (*engineSession)(nil)
 
-// newSession 以引擎接線的系統憑證庫儲存層（engineStore）組裝會話——
-// assembleSession 的薄包裝（login 流以空行起手，備料與驗證由
-// Validate(cookieLine) 完成）。
-func newSession(cookieLine, proxyURL string) (*engineSession, error) {
-	return assembleSession(cookieLine, proxyURL, engineStore)
+// Close 釋放會話持有的 transport 資源：冪等——以 sync.Once 保證僅關閉
+// 一次，其後呼叫（含 tr 未接線的零值會話）回 nil。Task 6 切換序列於舊
+// 會話替換前呼叫（設計 §8.4 步驟 6）。
+func (s *engineSession) Close() error {
+	if s == nil {
+		return nil
+	}
+	var err error
+	s.closeOnce.Do(func() {
+		if s.tr != nil {
+			err = s.tr.Close()
+		}
+	})
+	return err
 }
 
-// assembleSession 組裝引擎會話（preflight 裁決：newSession 本體重構為此形，
-// 供遷移等需指定 store 的呼叫端復用組裝鏈）：
+// newSessionFor 以帳號組裝會話（§8.3 寫回帳號化；設計 §8.4 會話工廠）：
+// 以該帳號專屬的儲存層（x-account-<user_id> 鍵、MyGO 預設 service）經
+// WithCookieStore 接入 Auth——Sender 回應 Set-Cookie 的同步 write-through
+// 落活躍帳號鍵、絕不覆蓋他帳（Review Focus 2）；PrepareAuth(acc.CookieLine)
+// 完成備料（cookie 行已知）。其餘鏈路同 assembleSession。儲存層建構失敗
+// 原樣向上。
+func newSessionFor(acc Account, proxyURL string) (*engineSession, error) {
+	store, err := newStore("", accountKey(acc.UserID))
+	if err != nil {
+		return nil, err
+	}
+	return assembleSession(acc.CookieLine, proxyURL, store)
+}
+
+// assembleSession 組裝引擎會話（組裝鏈唯一本體：login 流與 newSessionFor
+// 皆以此收斂，遷移等需指定 store 的呼叫端亦復用）：
 //
 //   - store 非 nil → 以 WithCookieStore 接入（Sender 回應 Set-Cookie 的
 //     write-through 落該儲存層）；nil → 不帶（遷移的臨時會話：只驗身分，
@@ -114,7 +142,7 @@ func assembleSession(cookieLine, proxyURL string, store auth.CookieStore) (*engi
 	if err != nil {
 		return nil, err
 	}
-	return &engineSession{auth: a, sender: api.NewSender(tr, a, reg, fp)}, nil
+	return &engineSession{auth: a, sender: api.NewSender(tr, a, reg, fp), tr: tr}, nil
 }
 
 // Validate 實作 xSession：PrepareAuth → Viewer（回傳身分，login 流以之建
