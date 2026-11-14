@@ -301,8 +301,8 @@ func TestPersistLoginFlushesDespiteDualWriteFailure(t *testing.T) {
 	}
 
 	// 雙寫錯誤已記錄（不再無聲消失）。
-	if !errors.Is(a.state.Err, dualErr) {
-		t.Fatalf("dualWrite 失敗應記於 AppState.Err，得 %v", a.state.Err)
+	if !errors.Is(a.state.Err(), dualErr) {
+		t.Fatalf("dualWrite 失敗應記於 AppState.Err，得 %v", a.state.Err())
 	}
 
 	// Flush 仍被呼叫：引擎憑證行已 Save（契約 2 主項未被閘門）。

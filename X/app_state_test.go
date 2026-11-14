@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -31,9 +34,10 @@ func TestAppState_Advance(t *testing.T) {
 		t.Fatalf("Ready 後 Stage 應維持 %q，得 %q", StageCredential, s.Stage)
 	}
 
-	// 帶 Err 的階段不前進。
+	// 帶 Err 的階段不前進。（Err 欄位已鎖內封裝：以 setErr 寫入——新狀態
+	// 首錄語義與舊直接欄位寫入等價。）
 	s2 := NewAppState(nil)
-	s2.Err = errors.New("boom")
+	s2.setErr(errors.New("boom"))
 	s2.Advance()
 	if s2.Stage != StageProxy {
 		t.Fatalf("帶 Err 時 Advance 不應推進，Stage = %q", s2.Stage)
@@ -104,5 +108,58 @@ func TestAppState_Close_Order(t *testing.T) {
 	}
 	if st.saved == "" {
 		t.Fatal("flush 應已 Save 未落盤變更")
+	}
+}
+
+// TestAppState_ErrConcurrent 釘測錯誤態的跨 goroutine 同步（Review
+// Important 1 修復）：背景 goroutine 併發 setErr（模擬 runSwitch／warmup
+// ／persistLogin 的 goAsync 寫入），與讀取側（Err()／Advance，模擬 UI 執
+// 行緒）交錯，-race 下無競爭；收斂後首錄不覆蓋——Err 恰為注入錯誤之一，
+// 且帶 Err 的 Advance 不推進。競爭偵測屬機率性（寫讀交錯由排程決定、
+// 不用 t.Parallel），以高頻交錯＋全套件 -race 閘常駐釘住。
+func TestAppState_ErrConcurrent(t *testing.T) {
+	s := NewAppState(nil)
+	const writers = 8
+	const writes = 500
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < writes; j++ {
+				s.setErr(fmt.Errorf("err-%d", i))
+			}
+		}(i)
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	reads := 0
+	for {
+		select {
+		case <-done:
+			err := s.Err()
+			if err == nil {
+				t.Fatal("併發 setErr 收斂後 Err 應非 nil")
+			}
+			if !strings.HasPrefix(err.Error(), "err-") {
+				t.Fatalf("Err 應為注入錯誤之一（首錄不覆蓋），得 %v", err)
+			}
+			s.Advance() // 帶 Err 的 Advance 不推進（讀取路徑同鎖）
+			if s.Stage != StageProxy {
+				t.Fatalf("帶 Err 時 Advance 不應推進，Stage = %q", s.Stage)
+			}
+			if reads == 0 {
+				t.Fatal("讀取迴圈未執行（測試失效）")
+			}
+			return
+		default:
+			_ = s.Err()
+			s.Advance()
+			reads++
+			runtime.Gosched()
+		}
 	}
 }

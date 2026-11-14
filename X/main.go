@@ -21,7 +21,9 @@ import (
 // app 是視窗呈現的應用狀態。所有欄位一律於 UI 執行緒讀寫：輸入處理器
 // 同步改動；背景結果經 publish（正式路徑 win.Update＝主執行緒套用＋重繪）
 // 回流——背景 goroutine 絕不直接改動本結構（MyGO 併發模型：goroutine 經
-// Window.Update 改狀態）。
+// Window.Update 改狀態）。唯一例外是生命週期錯誤記錄：背景工作逕呼叫
+// a.state.setErr（AppState.Err 鎖內同步，見 app_state.go），不觸及本結構
+// 其餘欄位。
 //
 // spawn／apply／newSess／onLoginPersist 是 view↔engine 接縫的測試注入點
 // （nil → 各 goAsync／publish／startSession／persistLogin 的正式路徑）；

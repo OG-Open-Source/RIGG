@@ -47,8 +47,8 @@ func TestQuitFlushTargetsActiveStore(t *testing.T) {
 
 	a.flushActive() // quit handler 本體
 
-	if a.state.Err != nil {
-		t.Fatalf("quit flush 不應記錯誤，得 %v", a.state.Err)
+	if a.state.Err() != nil {
+		t.Fatalf("quit flush 不應記錯誤，得 %v", a.state.Err())
 	}
 	accs, idx, err := loadAccounts(ctx)
 	if err != nil {
@@ -332,8 +332,8 @@ func TestWarmupLoadsAllAccounts(t *testing.T) {
 	if a.accounts[0].UserID != "6100" || a.accounts[1].UserID != "6101" {
 		t.Errorf("帳號快照應依索引序：得 %v", []string{a.accounts[0].UserID, a.accounts[1].UserID})
 	}
-	if a.state.Err != nil {
-		t.Errorf("warmup 不應記錯誤，得 %v", a.state.Err)
+	if a.state.Err() != nil {
+		t.Errorf("warmup 不應記錯誤，得 %v", a.state.Err())
 	}
 	a.warmup() // 冪等，可重跑
 	if len(a.accounts) != 2 || a.accounts[0].UserID != "6100" || a.accounts[1].UserID != "6101" {

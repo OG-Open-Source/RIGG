@@ -33,13 +33,22 @@ const flushTimeout = 5 * time.Second
 // AppState 是 app 生命週期狀態：階段、當前錯誤與就緒旗標；並持有引擎
 // 背景工作的 context 與收斂用 WaitGroup，供 Close 依序收斂。每段錯誤態
 // 獨立：Err 非零時 Advance 不前進，呼叫端處置後自行清除再推進。
+//
+// 併發面：錯誤態是唯一跨 goroutine 的欄位——setErr 於背景 goroutine 呼叫
+// （runSwitch／rollbackIndex／warmup／persistLogin 的 goAsync 內，含 Flush
+// 自記的 Save 失敗），與 UI 執行緒讀取（Advance、視圖經 Err()）以 errMu
+// 同步：錯誤是介面值，讀寫皆不具原子性，兩側都上鎖。Stage／Ready 僅於
+// UI 執行緒讀寫（Advance 經 publish 於主執行緒套用）。
 type AppState struct {
-	// Stage 是當前階段（StageProxy → StageCredential）。
+	// Stage 是當前階段（StageProxy → StageCredential）。僅 UI 執行緒讀寫。
 	Stage Stage
-	// Err 是當前階段的錯誤態；非 nil 時階段不前進。
-	Err error
-	// Ready 表示全階段完成（credential 就緒）。
+	// Ready 表示全階段完成（credential 就緒）。僅 UI 執行緒讀寫。
 	Ready bool
+
+	// err 是當前階段的錯誤態；非 nil 時階段不前進。errMu 守護：讀經
+	// Err()、寫經 setErr（可於任意 goroutine 呼叫）。
+	errMu sync.Mutex
+	err   error
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -89,7 +98,7 @@ func (s *AppState) GoSession(ctx context.Context, fn func(ctx context.Context)) 
 // 不前進（帶錯誤的階段由呼叫端處置；每段錯誤態獨立，不自動跳過）。
 // Ready 後再 Advance 為無操作。
 func (s *AppState) Advance() {
-	if s.Err != nil {
+	if s.Err() != nil {
 		return
 	}
 	switch s.Stage {
@@ -100,10 +109,22 @@ func (s *AppState) Advance() {
 	}
 }
 
-// setErr 記錄首個生命週期錯誤（不覆蓋既有錯誤態）。
+// Err 回當前生命週期錯誤態：與 setErr 同把 errMu 守護——寫入可來自背景
+// goroutine，介面值讀取不具原子性，讀側同樣上鎖。
+func (s *AppState) Err() error {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return s.err
+}
+
+// setErr 記錄首個生命週期錯誤（不覆蓋既有錯誤態）。可於任意 goroutine
+// 呼叫：背景工作（goAsync 內的 runSwitch／rollbackIndex／warmup／
+// persistLogin）與 Flush 的 Save 失敗自記皆經此寫入，鎖內首錄不覆蓋。
 func (s *AppState) setErr(err error) {
-	if s.Err == nil {
-		s.Err = err
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	if s.err == nil {
+		s.err = err
 	}
 }
 
