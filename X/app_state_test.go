@@ -147,9 +147,16 @@ func TestAppState_ErrConcurrent(t *testing.T) {
 			if !strings.HasPrefix(err.Error(), "err-") {
 				t.Fatalf("Err 應為注入錯誤之一（首錄不覆蓋），得 %v", err)
 			}
-			s.Advance() // 帶 Err 的 Advance 不推進（讀取路徑同鎖）
-			if s.Stage != StageProxy {
-				t.Fatalf("帶 Err 時 Advance 不應推進，Stage = %q", s.Stage)
+			// 帶 Err 的 Advance 不推進（讀取路徑同鎖）：比對 Advance 前
+			// 後的階段與就緒旗標——不預設 Stage 仍為 proxy（讀取迴圈的
+			// 早期 Advance 可能先於任何 writer 落地（排程決定），此時
+			// Stage 已合法推進至 credential；固定斷言 proxy 對此機率性
+			// 交錯即為 flake，-count 高頻複跑實測 ~6%）。收斂後 Err 恆
+			// 非零（首錄不清除），Advance 必然原地不動。
+			stage, ready := s.Stage, s.Ready
+			s.Advance()
+			if s.Stage != stage || s.Ready != ready {
+				t.Fatalf("帶 Err 時 Advance 不應推進：stage %q→%q ready=%v→%v", stage, s.Stage, ready, s.Ready)
 			}
 			if reads == 0 {
 				t.Fatal("讀取迴圈未執行（測試失效）")
