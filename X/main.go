@@ -29,10 +29,10 @@ type app struct {
 	state *AppState
 
 	// —— 接縫注入點（測試替身；nil → 正式路徑）——
-	spawn          func(fn func(ctx context.Context))                                // 背景工作派發
-	apply          func(fn func())                                                   // 主執行緒套用背景結果
-	newSess        func() (xSession, error)                                          // 會話建構
-	onLoginPersist func(sess xSession, info viewerInfo, cookieLine string) error     // 登入成功首次落盤
+	spawn          func(fn func(ctx context.Context))                            // 背景工作派發
+	apply          func(fn func())                                               // 主執行緒套用背景結果
+	newSess        func() (xSession, error)                                      // 會話建構
+	onLoginPersist func(sess xSession, info viewerInfo, cookieLine string) error // 登入成功首次落盤
 
 	// —— bootstrap（startToken 結果；login 代理狀態列與錯誤區消費）——
 	proxy    string // 解析出的代理 URL（空＝尚未就緒）
