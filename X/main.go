@@ -78,14 +78,14 @@ type app struct {
 	// creds 是憑證有效性 TTL 快取（verifyTTL 內切換免重驗，§8.5）。
 	creds *credCache
 
-	// —— home 畫面狀態 ——
-	posts    []post   // 已顯示貼文（work_id 去重、首見順序）
-	cursor   string   // 下一頁游標（空＝已到底）
-	seen     []string // seenTweetIds：已顯示 work_id 累積（跨頁去重）
-	homeBusy bool
-	homeErr  error
-	end      bool
-	list     ui.ListState
+	// —— home 畫面狀態（Task 8：feeds 三槽）——
+	// feeds 是固定三槽的時間線狀態（非 map）：For You／Following／
+	// search 預留（feedSearch 本任務建立、保留為空，Task 10 填充）。各
+	// 槽完全隔離——posts／cursor／seen／end／busy／err／list 各自累積，
+	// 切換 tab 不互相污染；seen 上限 seenCap（Review Focus 4）。
+	// activeFeed 是活躍槽索引（ui.Tabs 的 *int 裸 int）。
+	feeds      [3]*timelineState
+	activeFeed int
 }
 
 // newApp 建構 app：生命週期狀態先以無儲存層起手（main 於 store 建構成功
@@ -95,6 +95,7 @@ func newApp() *app {
 		state:      NewAppState(nil),
 		accInvalid: map[string]bool{},
 		creds:      &credCache{},
+		feeds:      [3]*timelineState{{}, {}, {}},
 	}
 }
 
@@ -251,8 +252,8 @@ func (a *app) switchTo(userID string) {
 //     錯誤文案（switchErr）。
 //  6. 成功：舊 sess.Close()（transport 收斂——簡報 §1.3 實測根因）。
 //  7. 替換 a.sess／a.auth／a.activeStore；a.gen++。
-//  8. feeds 歸零（墓碑；feeds 重構屬 Task 8——現行單 feed 狀態歸零）；
-//     自動載入 For You 首頁。
+//  8. feeds 歸零（墓碑；三槽全數重置）＋落回 For You；自動載入 For You
+//     首頁。
 func (a *app) runSwitch(ctx context.Context, userID string, snap switchSnapshot) {
 	// 步驟 1：flush 當前（僅於活躍儲存層已確立時）。
 	if snap.store != nil {
@@ -331,11 +332,12 @@ func (a *app) runSwitch(ctx context.Context, userID string, snap switchSnapshot)
 		a.gen++
 		a.switchErr = nil
 		a.switchBusy = false
-		// 步驟 8：feeds 歸零（墓碑；當前單 feed 狀態——feeds 重構屬 Task 8）。
-		a.posts, a.cursor, a.seen = nil, "", nil
-		a.homeBusy, a.homeErr, a.end = false, nil, false
-		a.list = ui.ListState{}
-		a.loadMore() // 自動載入 For You 首頁
+		// 步驟 8：feeds 歸零（墓碑；三槽全數——posts/cursor/seen/list/
+		// busy/err/end 皆隨新槽歸零）並落回 For You，自動載入其首頁
+		// （CUJ：切換後呈現新帳號的 For You）。
+		a.feeds = [3]*timelineState{{}, {}, {}}
+		a.activeFeed = feedForYou
+		a.loadFeed(feedForYou) // 自動載入 For You 首頁
 	})
 }
 

@@ -166,11 +166,11 @@ func TestSwitchGenerationDiscardsStalePublish(t *testing.T) {
 	}
 
 	a.sess = old
-	a.posts = mkPosts("seed") // 切換前已顯示的舊帳號帖
-	a.seen = []string{"seed"}
+	a.feeds[feedForYou].posts = mkPosts("seed") // 切換前已顯示的舊帳號帖
+	a.feeds[feedForYou].seen = []string{"seed"}
 	a.gen = 0
 
-	a.loadMore() // 舊 feed 工作派出（阻塞於 release）
+	a.loadFeed(feedForYou) // 舊 feed 工作派出（阻塞於 release）
 
 	// 切換以同步 spawn 執行（序列可控）；其 publish 入佇列、尚未套用。
 	a.spawn = func(fn func(ctx context.Context)) { fn(context.Background()) }
@@ -185,16 +185,26 @@ func TestSwitchGenerationDiscardsStalePublish(t *testing.T) {
 	if a.gen != 1 {
 		t.Fatalf("切換後 a.gen 應已變（+1），得 %d", a.gen)
 	}
-	if got := workIDs(a.posts); !sameStrings(got, []string{"new1"}) {
+	if got := workIDs(a.feeds[feedForYou].posts); !sameStrings(got, []string{"new1"}) {
 		t.Errorf("世代過期的舊 publish 不得污染新帳號畫面：posts = %q，欲得 [new1]", got)
 	}
 	for _, stale := range []string{"seed", "old1", "old2"} {
-		if slices.Contains(workIDs(a.posts), stale) {
-			t.Errorf("舊帳號帖 %s 不得出現在新帳號畫面：posts = %q", stale, workIDs(a.posts))
+		if slices.Contains(workIDs(a.feeds[feedForYou].posts), stale) {
+			t.Errorf("舊帳號帖 %s 不得出現在新帳號畫面：posts = %q", stale, workIDs(a.feeds[feedForYou].posts))
 		}
 	}
-	if !sameStrings(a.seen, []string{"new1"}) {
-		t.Errorf("seen 零混入：得 %q，欲得 [new1]", a.seen)
+	if !sameStrings(a.feeds[feedForYou].seen, []string{"new1"}) {
+		t.Errorf("seen 零混入：得 %q，欲得 [new1]", a.feeds[feedForYou].seen)
+	}
+	// 墓碑涵蓋全部三槽：Following／search 亦歸零，且落回 For You。
+	if len(a.feeds[feedFollowing].posts) != 0 || len(a.feeds[feedFollowing].seen) != 0 {
+		t.Errorf("墓碑應歸零 Following 槽：posts=%q seen=%q", workIDs(a.feeds[feedFollowing].posts), a.feeds[feedFollowing].seen)
+	}
+	if len(a.feeds[feedSearch].posts) != 0 {
+		t.Errorf("墓碑應歸零 search 預留槽：posts = %q", workIDs(a.feeds[feedSearch].posts))
+	}
+	if a.activeFeed != feedForYou {
+		t.Errorf("切換後應落回 For You，得 %d", a.activeFeed)
 	}
 	if a.switchBusy {
 		t.Error("切換完成後 switchBusy 應復位")

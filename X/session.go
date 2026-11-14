@@ -75,6 +75,10 @@ type xSession interface {
 	// Home 讀取一頁時間線：count 固定 homePageSize；seen 為已顯示
 	// work_id 累積（seenTweetIds，跨頁去重，Task 10 介面契約）。
 	Home(cursor string, seen []string) (*timelineResult, error)
+	// HomeLatest 讀取 Following（最新）時間線一頁（Task 7 的引擎操作
+	// HomeLatestTimeline；與 HomeTimeline 同構，D16——P0' 實證）：count
+	// 固定 homePageSize；seen 同 Home。
+	HomeLatest(cursor string, seen []string) (*timelineResult, error)
 	// Close 釋放會話資源（transport 收斂；冪等）：switchTo 步驟 6 於舊
 	// 會話替換前呼叫（設計 §8.4——簡報 §1.3 實測根因）。
 	Close() error
@@ -169,4 +173,9 @@ func (s *engineSession) Validate(cookieLine string) (viewerInfo, error) {
 // Home 實作 xSession。
 func (s *engineSession) Home(cursor string, seen []string) (*timelineResult, error) {
 	return s.sender.HomeTimeline(cursor, homePageSize, seen)
+}
+
+// HomeLatest 實作 xSession（Task 7 的 HomeLatestTimeline 引擎操作）。
+func (s *engineSession) HomeLatest(cursor string, seen []string) (*timelineResult, error) {
+	return s.sender.HomeLatestTimeline(cursor, homePageSize, seen)
 }

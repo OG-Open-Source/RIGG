@@ -25,12 +25,13 @@ import (
 // home 依注入腳本回應（nil 腳本＝成功／空頁）。userID 攜帶身分供切換
 // 斷言（switch_test.go）；Close 為介面擴充後的 stub（呼叫計入日誌）。
 type fakeSession struct {
-	mu       sync.Mutex
-	calls    []string
-	lastSeen []string
-	userID   string
-	validate func(cookie string) (viewerInfo, error)
-	home     func(cursor string, seen []string) (*timelineResult, error)
+	mu         sync.Mutex
+	calls      []string
+	lastSeen   []string
+	userID     string
+	validate   func(cookie string) (viewerInfo, error)
+	home       func(cursor string, seen []string) (*timelineResult, error)
+	homeLatest func(cursor string, seen []string) (*timelineResult, error)
 }
 
 func (f *fakeSession) Validate(cookie string) (viewerInfo, error) {
@@ -52,6 +53,19 @@ func (f *fakeSession) Home(cursor string, seen []string) (*timelineResult, error
 		return &timelineResult{}, nil
 	}
 	return f.home(cursor, seen)
+}
+
+// HomeLatest 記錄呼叫並依注入腳本回應（Task 8：Following 時間線接縫，
+// nil 腳本＝成功／空頁）。
+func (f *fakeSession) HomeLatest(cursor string, seen []string) (*timelineResult, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, "HomeLatest")
+	f.lastSeen = append([]string(nil), seen...)
+	f.mu.Unlock()
+	if f.homeLatest == nil {
+		return &timelineResult{}, nil
+	}
+	return f.homeLatest(cursor, seen)
 }
 
 func (f *fakeSession) Close() error {
