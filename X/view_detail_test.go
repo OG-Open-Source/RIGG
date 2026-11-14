@@ -63,6 +63,22 @@ func detailVideoPost() post {
 	}
 }
 
+// detailGifPost 造一則 gif 媒體貼文：gif 與 video 同一解析路徑、亦以
+// mp4 為 URL（D13；合成測試值非真影片）。
+func detailGifPost() post {
+	return post{
+		WorkID:     "g1",
+		WorkURL:    "https://x.com/u/status/g1",
+		ScreenName: "u",
+		Title:      "動圖帖g1",
+		Media: []api.MediaItem{{
+			Kind:     "gif",
+			ThumbURL: "https://pbs.twimg.test/media/Fg1?format=jpg&name=small",
+			URL:      "https://video.twimg.test/Fg1.mp4",
+		}},
+	}
+}
+
 // detailFixture 組裝已登入（fake session）的 home＋展開檢視測試環境：
 // 視窗 1280 寬（≥1024 右欄並列形態）。
 func detailFixture(t *testing.T, fake *fakeSession) (*app, *ui.Tester) {
@@ -154,7 +170,8 @@ func TestCloseDetailClosesPlayer(t *testing.T) {
 
 // TestDetailShowsLargeImageAndVideo（Kind 分派，§8.6）：photo 帖 →
 // fetchImage 以 Media[0].URL（name=large）呼叫、解碼結果入展開狀態（不
-// 走縮圖 LRU）；video 帖 → openPlayer 以 Media[0].URL（mp4）呼叫。
+// 走縮圖 LRU）；video 帖 → openPlayer 以 Media[0].URL（mp4）呼叫；gif 帖
+// → 同 video 臂（D13：gif 走 mp4 variant，同一解析路徑）。
 func TestDetailShowsLargeImageAndVideo(t *testing.T) {
 	photo, videoPost := detailPhotoPost(), detailVideoPost()
 	gotImage, gotPlayer := "", ""
@@ -190,6 +207,17 @@ func TestDetailShowsLargeImageAndVideo(t *testing.T) {
 	}
 	if a.player == nil {
 		t.Error("video 帖應建立單一活躍播放器")
+	}
+	// gif 帖（D13）：gif 與 video 同臂——openPlayer 以 Media[0].URL（mp4）
+	// 建構單一活躍播放器。
+	gif := detailGifPost()
+	gotPlayer = ""
+	a.openDetail(gif)
+	if gotPlayer != gif.Media[0].URL {
+		t.Errorf("gif 帖應以 Media[0].URL（mp4）呼叫 openPlayer（D13），得 %q, want %q", gotPlayer, gif.Media[0].URL)
+	}
+	if a.player == nil {
+		t.Error("gif 帖應建立單一活躍播放器")
 	}
 }
 
@@ -292,5 +320,67 @@ func TestRowClickOpensDetailNotLink(t *testing.T) {
 	}
 	if len(tt.OpenedURLs()) == 0 {
 		t.Errorf("點 Link 應外開 URL，得 %q", tt.OpenedURLs())
+	}
+}
+
+// TestNarrowWindowRowClickDoesNotOpenDetail（窄窗閘，Important 1 修復釘
+// 注）：窗寬 <1024 時展開檢視不渲染（收合按鈕只在 detailView），點媒體
+// 列若開帖將建出無任何收合路徑的活躍播放器（video 背景載入）——列點擊
+// 與右欄並列同一寬度閘：openPlayer 接縫零呼叫、detail／player 保持 nil。
+func TestNarrowWindowRowClickDoesNotOpenDetail(t *testing.T) {
+	calls := 0
+	stubOpenPlayer(t, func(string) (player, error) {
+		calls++
+		return &fakePlayer{}, nil
+	})
+	p := detailVideoPost()
+	fake := &fakeSession{home: pageQueue(pageOf([]post{p}, ""))}
+	a := newTestApp()
+	a.sess = fake
+	tt := ui.NewTester(a.view, 900, 720) // 窄窗：<1024
+	for i := 0; i < 3; i++ {
+		tt.Frame() // feed 載入（窄窗沿 feed 單欄）
+	}
+	if err := tt.Click(p.Title); err != nil {
+		t.Fatalf("點列主體: %v", err)
+	}
+	tt.Frame()
+	if calls != 0 {
+		t.Errorf("窄窗點媒體列不得建播放器（openPlayer 零呼叫），calls=%d", calls)
+	}
+	if a.player != nil {
+		t.Errorf("窄窗點媒體列不得建立活躍播放器，player=%v", a.player)
+	}
+	if a.detail != nil {
+		t.Errorf("窄窗點列不得開啟展開檢視，detail=%v", a.detail)
+	}
+}
+
+// TestNarrowResizeCollapsesDetail（窄窗閘第二入口，Important 1 修復釘注）：
+// ≥1024 開帖（播放器活躍）後縮窗至 <1024 → 窄幀遇殘留 detail 即幀收合
+//（closeDetail，§8.6「離開展開檢視」語義）：播放器 Close 恰一次、
+// detail／player 歸零——展開檢視已不渲染，收合按鈕隨之消失。
+func TestNarrowResizeCollapsesDetail(t *testing.T) {
+	var players []*fakePlayer
+	stubOpenPlayer(t, func(string) (player, error) {
+		p := &fakePlayer{}
+		players = append(players, p)
+		return p, nil
+	})
+	a := newTestApp()
+	a.sess = &fakeSession{}
+	tt := ui.NewTester(a.view, 1280, 720)
+	a.openDetail(detailVideoPost())
+	tt.Frame() // 右欄並列：展開檢視渲染
+	if a.detail == nil || a.player == nil {
+		t.Fatalf("前置：展開檢視應開啟且播放器活躍，detail=%v player=%v", a.detail, a.player)
+	}
+	tt.SetSize(900, 720)
+	tt.Frame() // 窄幀：homeView 遇殘留 detail 即幀收合
+	if a.detail != nil || a.player != nil {
+		t.Errorf("縮窗後殘留 detail 應被收合，detail=%v player=%v", a.detail, a.player)
+	}
+	if len(players) != 1 || players[0].closes != 1 {
+		t.Errorf("縮窗收合應 Close 播放器恰一次，players=%d closes=%d", len(players), players[len(players)-1].closes)
 	}
 }

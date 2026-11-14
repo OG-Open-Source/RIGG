@@ -37,6 +37,12 @@ var openPlayer = func(url string) (player, error) { return video.OpenURL(url) }
 // layoutBand 佈線可再調）。
 const detailPanelWidth = float32(380)
 
+// detailMinWidth 是展開檢視並列（右欄）形態的窗寬下限（DIP）：<1024 為
+// 窄窗——列點擊不開帖、殘留 detail 於窄幀即時收合（兩處同一閘，見
+// homeView 與 homeFeedView 列點擊）：<1024 不渲染展開檢視，收合按鈕
+//（只在 detailView）不存在，開帖或殘留將使活躍播放器無任何收合路徑。
+const detailMinWidth = float32(1024)
+
 // detailMediaHeight 是展開檢視媒體區的固定高（DIP）：圖以 Fit(Contain)
 // 貼合、播放器未 Ready 時的縮圖／佔位同框，版面不隨載入跳動。
 const detailMediaHeight = float32(260)
@@ -129,9 +135,6 @@ func (a *app) fetchDetailImage(url string) {
 	})
 }
 
-// detailView 建構展開檢視（右欄形態本體；Task 14 將它掛進 <1024 的
-// Router 頁）：標題列（作者＋收合）、貼文文字、WorkURL 與媒體區（Kind
-// 分派見 detailMediaView）。顯示欄位經 Sanitize 後上屏（view 層契約）。
 // detailView 建構展開檢視（右欄形態本體；Task 14 將它掛進 <1024 的
 // Router 頁）：標題列（作者＋收合）、貼文文字、WorkURL 與媒體區（Kind
 // 分派見 detailMediaView）。顯示欄位經 Sanitize 後上屏（view 層契約）。

@@ -50,7 +50,14 @@ func (a *app) homeView(c *ui.Context) {
 		a.homeFeedView(c)
 		return
 	}
-	if w, _ := c.Size(); w < 1024 {
+	if w, _ := c.Size(); w < detailMinWidth {
+		// 窄窗（<1024）沿 feed 單欄（Task 14 的 Router 頁形態屬其佈局
+		// 接線）：展開檢視本幀不渲染，收合按鈕（只在 detailView）隨之
+		// 消失——resize 入口（≥1024 開帖後縮窗）若不收合，殘留的活躍
+		// 播放器將無任何收合路徑。故視覺上已消失即視為「離開展開檢視」
+		//（§8.6 語義）：即幀 closeDetail（冪等；同幀重建自行收斂，T14
+		// 換 Router 接線時一併移除）。
+		a.closeDetail()
 		a.homeFeedView(c)
 		return
 	}
@@ -142,8 +149,13 @@ func (a *app) homeFeedView(c *ui.Context) {
 				}
 				a.thumbRow(c, kind, f, p) // 縮圖格（僅含媒體貼文渲染；Task 12）
 			})
-			if body.RowClicked() {
-				a.openDetail(p) // 展開檢視入口（單一活躍播放器規則見 openDetail）
+			// 展開檢視入口（單一活躍播放器規則見 openDetail）與右欄並
+			// 列同一寬度閘：窗寬 <1024 時展開檢視不渲染（收合按鈕只在
+			// detailView），開帖將建出無收合路徑的活躍播放器（video 背
+			// 景載入／大圖下載）——窄窗列點擊不開帖（同 detailMinWidth
+			// 判定，見 homeView）。
+			if w, _ := c.Size(); w >= detailMinWidth && body.RowClicked() {
+				a.openDetail(p)
 			}
 		}).Grow(1)
 		// 到底提示：游標空（或與前頁相同）後顯示，且不再觸發翻頁。
