@@ -8,6 +8,9 @@
 //   - media：以 Sender.Send 取得 HomeTimeline 的原始 data JSON，輸出其中
 //     的媒體 CDN URL 逐條清單（v1 的 TimelineResult 尚無媒體欄位，Task 11
 //     才加——此處直接掃原始 JSON，不擴引擎介面）。
+//   - search（Task 2 儀器）：以記憶體 Operation 驗證 SearchTimeline——
+//     queryId 由 searchid 萃取值以參數傳入（不寫死於工具）；REQ-GQL-005
+//     恆 POST；空 FeatureSwitches → features 整鍵省略（空 features 臂）。
 //
 // stdout 一律為 JSON 摘要；stderr 為錯誤訊息。任何輸出（含錯誤）絕不含
 // cookie 值（REQ-INV-01）：headers 經 summarize 全數遮罩，錯誤訊息輸出前
@@ -277,6 +280,69 @@ func runLatestCmd() {
 	fmt.Println(summarize(probeHeaders(sess.auth, cookieLine), cookieLine, runLatest(sess)))
 }
 
+// newProbeReqRaw 由一次原始 JSON 回應組摘要條目（Send 直呼路徑——回應
+// 未經解析，data 以「含 tweet_results」計）：ok＝無錯且 raw 非空。
+func newProbeReqRaw(name string, raw json.RawMessage, err error) probeReq {
+	req := probeReq{Name: name}
+	if err != nil {
+		req.Err = err.Error()
+		return req
+	}
+	req.OK = true
+	req.Data = bytes.Contains(raw, []byte(`"tweet_results"`))
+	return req
+}
+
+// runSearchCmd：search 子命令（Task 2 儀器）——args: <queryId> <query>
+// [product] [count]。以記憶體 Operation 送 SearchTimeline：REQ-GQL-005
+// 恆 POST；FeatureSwitches 空 → Features() 回 nil → features 整鍵省略
+//（空 features 臂——P0' 實證可行）；variables 需含 product（P0' 422
+// 實證：GRAPHQL_VALIDATION_FAILED "must be defined: variable product"）。
+// queryId 為公開介面事實，由參數傳入、不寫死於工具。
+func runSearchCmd(args []string) {
+	if len(args) < 2 {
+		failf("用法: probe11 search <queryId> <query> [product] [count]")
+	}
+	qid, query := args[0], args[1]
+	product := "Top"
+	if len(args) > 2 {
+		product = args[2]
+	}
+	count := 20
+	if len(args) > 3 {
+		n, err := strconv.Atoi(args[3])
+		if err != nil || n <= 0 || n > 100 {
+			failf("probe11: count 必須為 1..100 的整數")
+		}
+		count = n
+	}
+	cookieLine, ok := probeCookie()
+	if !ok {
+		os.Exit(1)
+	}
+	sess, err := newProbeSession(cookieLine)
+	if err != nil {
+		failErr(cookieLine, err)
+	}
+	op := &graphql.Operation{Name: "SearchTimeline", QueryID: qid, Method: "POST"}
+	qv, qerr := graphql.CompactJSON(query)
+	if qerr != nil {
+		failErr(cookieLine, qerr)
+	}
+	pv, perr := graphql.CompactJSON(product)
+	if perr != nil {
+		failErr(cookieLine, perr)
+	}
+	vars := graphql.OrderedParams{
+		{K: "product", V: string(pv)},
+		{K: "rawQuery", V: string(qv)},
+		{K: "count", V: strconv.Itoa(count)},
+	}
+	raw, err := sess.sender.Send(op, vars, "")
+	fmt.Println(summarize(probeHeaders(sess.auth, cookieLine), cookieLine,
+		[]probeReq{newProbeReqRaw("search.post", raw, err)}))
+}
+
 // runSearchIDCmd：searchid 子命令——自檔案路徑參數（"-" 為 stdin）或
 // stdin 讀 chunk JS，輸出 queryId 對照 JSON。純函式路徑：無網路、不讀
 // PROBE_COOKIE（Task 2 於 latest 失敗時以此重建 chunk map 核對 queryId，
@@ -345,6 +411,8 @@ func main() {
 		runSearchIDCmd(os.Args[2:])
 	case "media":
 		runMediaCmd()
+	case "search":
+		runSearchCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "probe11: 未知子命令 %q\n", os.Args[1])
 		usage()
@@ -360,6 +428,9 @@ func usage() {
   latest             HomeTimeline 雙形態各送一次（GET 啟動形態＋POST seen 形態），輸出脫敏 JSON 摘要
   searchid [檔案|-]  自檔案或 stdin 讀 chunk JS，輸出 queryId 對照 JSON（無網路、不需 cookie）
   media              送一次 HomeTimeline，輸出回應中的媒體 CDN URL 清單 JSON
+  search <qid> <query> [count]
+                     以記憶體 Operation 送 SearchTimeline（恆 POST、空
+                     features），輸出脫敏 JSON 摘要（Task 2 儀器）
 
 環境:
   PROBE_COOKIE       單行 cookie（latest／media 必需；值不落檔案與輸出）

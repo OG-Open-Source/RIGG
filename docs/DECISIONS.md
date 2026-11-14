@@ -354,3 +354,50 @@ v1.0.13-utls）。
   攤平路徑：出貨為 exe 旁的 `graphql.json`；`registryPath()` 優先 exe
   目錄、退回開發期的 `static/graphql.json`）——修正 L2 後首次實機
   登入的兩個失敗根因（快照未出貨＋代理 fail-closed）。
+
+## v1.1 P0' 探測結論（Task 2，2026-11-14）
+
+執行方式：`X/cmd/probe11`（Task 1 工具＋Task 2 增 `search` 子命令）以
+需求方提供的單一 cookie 會話實測；判準沿用 D1（每臂 ≥20、HTTP 200 且回
+應 data 含貼文）。程式內錨點見 `X/internal/xapi/api/probe_findings.go`。
+
+### HomeLatestTimeline（規格外操作，D16 依據）
+
+* **結果**：GET 20/20、POST（cursor+seen）20/20、**零失敗**——空
+  featureSwitches 可用，queryId `IVA5BUbeYPTrpYekQH7jiA`（v1 探測節記錄
+  值）至今有效。
+* **裁決（D16 定稿）**：與 HomeTimeline 同構的雙形態（首頁 GET 無 seen；
+  cursor/seen 非空 → POST 帶 seenTweetIds）＋空 features。登錄「本操作
+  在凍結規格外，以探測＋快照為契約、隨 X 前端發版漂移」。
+
+### SearchTimeline（REQ-RD-014：恆 POST）
+
+* **queryId**：`vLHjqbDv7TPFMBkIIO1nOA`（登入態 shell
+  `main.73ebd7d6b601a4f8a.js` chunk map 萃取，105 操作之一）。
+* **結果**：product=Top 10/10、product=Latest 10/10、**零失敗**——空
+  featureSwitches 可用。
+* **關鍵發現**：variables **必須含 `product`**（缺 → 422
+  `GRAPHQL_VALIDATION_FAILED` "must be defined: variable product"）；
+  形狀 `{product, rawQuery, count}`（恆 POST、body 鍵序沿 REQ-GQL-003）。
+* **前端輪動註記**：登出態 shell 已換 Vite 架構（`x-web/x-web/entry-*`），
+  登入態 shell 仍為 `responsive-web/client-web/main.*.js`——chunk 萃取
+  應以登入態 shell 為入口。
+
+### 媒體 CDN 直載（D22 依據）
+
+* **縮圖**：`?format=<ext>&name=small` 10/10（HTTP 200、Content-Type
+  `image/*`）——`format` 必須沿用 `media_url_https` 副檔名。
+* **影片**：timeline 回應內 video.twimg.com URL 5/5 全 200（mp4
+  `video/mp4` 3、HLS `application/x-mpegURL` 2）——免認證、免簽章。
+* **裁決（D22 定稿）**：媒體直載以獨立輕量 http 客戶端可行；mp4 variant
+  （最高位元率）為展開播放來源（D13）；m3u8 不採用。降級退路（解析＋
+  計數＋外開）保留為應急。
+
+### 修訂登錄（本節同時處置）
+
+* **「web 已實證」虛假引用撤回**：v1 對 web 建置從未留驗收記錄；實況為
+  「`go tool mygo build -platform web` 編譯冒煙通過（2026-11-13 起，
+  每 commit 退出條件）＋**資料面未驗證**（瀏覽器 CORS＋raw TLS 限制，
+  資料面 relay 屬 v2）」。
+* probe11 的 `search` 子命令與變數修正（CompactJSON 前序列化、product
+  變數）隨本節 commit——工具屬 T2 執行儀器。
