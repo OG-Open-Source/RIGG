@@ -171,6 +171,13 @@ func (a *app) submitLogin() {
 				if es, ok := sess.(*engineSession); ok {
 					a.auth = es.auth // quit flush 用
 				}
+				// 活躍儲存層自登入成功即接線（final review F1）：quit
+				// flush（flushActive）與切換序列步驟 1 的兜底 flush 自首
+				// 登即落活躍帳號鍵，毋須等待首次切換。最小接線（控制器裁
+				// 決 2026-11-15）：會話本身不重組——assembleSession 未帶
+				// 儲存層，ct0 實務不輪替（探測節 60 回應 0 次輪替），
+				// Sender 的即時 write-through 屬冗餘，flush 兜底足夠。
+				a.activeStore = newAccountCookieStore(info.UserID)
 				a.activeID = info.UserID
 				a.syncAccountSelection()
 				if info.UserID != "" {

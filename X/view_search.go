@@ -3,8 +3,9 @@
 // 式內的 Task 8 不變式釘注），渲染走 homeView 的 feed 路徑（槽隔離、世代
 // publish 檢查沿 T6/T8 的形）；搜尋結果只寫 feeds[feedSearch]，恆不觸及
 // 他 feed 的 posts/seen。product 固定 "Top"（Task 9 裁決：必填變數）；翻
-// 頁屬後續任務——游標與 end 依契約留存，AtEnd 對 feedSearch 不派發
-// （loadFeed 的大聲預設）。搜尋歷史不做（Non-Goals）。
+// 頁由 loadFeed 同徑承接（§8.7 翻頁契約，final review F3 兌現）：AtEnd 以
+// 槽內留存游標派發接續頁（Search 無 seen 參數），submitSearch 只負責首頁
+// 起跑（游標以空字串起跑）。搜尋歷史不做（Non-Goals）。
 package main
 
 import (

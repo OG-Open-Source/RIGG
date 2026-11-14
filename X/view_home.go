@@ -68,20 +68,16 @@ const (
 //     （a.detail 非 nil 時右欄 detailView）。
 //   - band 3（≥1200）：同 band 2＋內容欄 max-width 640 置中、兩側留白。
 //
-// band <2 不渲染展開檢視：殘留 detail 即幀收合（closeDetail，冪等；T13
-// 語義經 band 閘延續——收合按鈕只在 detailView，不收合將使活躍播放器無
-// 收合路徑）。移除帳號的確認 Modal 於各帶頂層呈現；切換失敗的錯誤區
-// （switchErr）呈於頂列之下。
+// 窄帶（band 0/1）的展開檢視以全寬 detail 頁承接（final review F2，控制
+// 器裁決 2026-11-15）：a.detail 非 nil 時整個內容區（含 band 1 側欄）改
+// 渲染 detailView——feed 於展開期間不可達，收合按鈕（detailView 內）即
+// 「離開展開檢視」的出口（closeDetail）；§8.8 的 ui.Router 頁形態不予實
+// 作，Router URL/歷史語義延後 v1.2（DECISIONS〈v1.1 收尾登錄〉）。移除
+// 帳號的確認 Modal 於各帶頂層呈現；切換失敗的錯誤區（switchErr）呈於頂
+// 列之下。
 func (a *app) homeView(c *ui.Context) {
 	w, _ := c.Size()
 	band := a.layoutBand(w)
-	if band < 2 && a.detail != nil {
-		// 帶外（band 0/1）展開檢視本幀不渲染，收合按鈕（只在
-		// detailView）隨之消失——resize 入口（≥1024 開帖後縮窗）若不
-		// 收合，殘留的活躍播放器將無任何收合路徑。故視覺上已消失即視
-		// 為「離開展開檢視」（§8.6 語義）：即幀 closeDetail。
-		a.closeDetail()
-	}
 	// 選單一律以主題彈出呈現（PopoverMenus）：與自繪 UI 同貌，內窗可檢
 	// 查（Menu／ChooseMenuItem／Texts）。
 	if c.MenuPresentation() != ui.PopoverMenus {
@@ -97,6 +93,18 @@ func (a *app) homeView(c *ui.Context) {
 			ui.Row(c).Padding(8, 16).AlignItems(ui.Center).Background(t.Surface).Children(func() {
 				ui.Text(c, Sanitize(errorText(a.switchErr))).TextColor(t.Danger).Grow(1)
 			})
+		}
+		if band < 2 && a.detail != nil {
+			// 窄帶全寬展開檢視（F2）：feed（與 band 1 側欄）於展開期
+			// 間不可達——收合按鈕（detailView 內）closeDetail 返回
+			// feed，切換帳號／登出經墓碑 closeDetail 同效（§8.6 語義
+			// 不變：播放器生命週期隨 detail）。幀內快照：收合按鈕於本
+			// 幀歸零 detail 不影響本幀渲染。
+			d := *a.detail
+			ui.Column(c).Fill().Background(c.Theme().Surface).Children(func() {
+				a.detailView(c, d)
+			})
+			return
 		}
 		if band == 0 {
 			a.homeFeedView(c, band)
@@ -345,7 +353,8 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 		}
 		// 翻頁觸發：先於列表建構檢查（AtEnd 反映上一框的版面；首載以
 		// posts 為空表達）。loadFeed 自帶防抖與終止條件（busy／end／
-		// err）；feedSearch 非其管轄（大聲預設不派發，載入走 submitSearch）。
+		// err），三槽同徑（含 feedSearch 的游標接續頁，F3；搜尋首頁
+		// 起跑走 submitSearch）。
 		if len(f.posts) == 0 || f.list.AtEnd() {
 			a.loadFeed(kind)
 		}
@@ -397,12 +406,11 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 				}
 				a.thumbRow(c, kind, f, p) // 縮圖格（僅含媒體貼文渲染；Task 12）
 			})
-			// 展開檢視入口（單一活躍播放器規則見 openDetail）與右欄並
-			// 列同一寬度閘：窗寬 <bpLaptop（band <2）時展開檢視不渲染
-			//（收合按鈕只在 detailView），開帖將建出無收合路徑的活躍播
-			// 放器（video 背景載入／大圖下載）——窄帶列點擊不開帖（同
-			// homeView 的 band 閘判定）。
-			if w, _ := c.Size(); w >= bpLaptop && body.RowClicked() {
+			// 展開檢視入口（單一活躍播放器規則見 openDetail）：各帶皆
+			// 可開帖——窄帶（band <2）以全寬 detail 頁承接（F2 裁決，
+			// homeView 分流；收合路徑恆在 detailView 內，無殘留播放器
+			// 風險），寬帶為右欄並列。
+			if body.RowClicked() {
 				a.openDetail(p)
 			}
 		}).Grow(1)
@@ -446,38 +454,49 @@ func (a *app) thumbRow(c *ui.Context, kind int, f *timelineState, p post) {
 // loadFeed 載入 feed kind 的下一頁（或首頁）：防抖與終止閘門（busy／已
 // 到底／有未處置錯誤／無會話）→ 背景呼叫接縫——For You 走 Home（契約
 // 3：HomeTimeline(cursor, 20, seen)）、Following 走 HomeLatest（Task 7：
-// HomeLatestTimeline，雙形態同構；cursor／seen 各自累積；feedSearch 非
-// 本派發管轄——大聲預設不派發，Task 10 搜尋走 submitSearch）→ 經 publish
-// 回 UI 執行緒套用。背景工作以會話子樹派發（goSession，§8.4），起跑前捕捉
-// 世代（gen）與槽，回寫前比對——世代過期（帳號切換墓碑已歸零）或槽已被
-// 換新的舊結果整批丟棄，不得污染新畫面（D18 世代邊界雙保險：cancel 斬
-// 在途、gen 防已回程；Review Focus 1）。逐 feed 化（Task 8）：寫回一律指
-// 向派發時捕捉的槽 kind，與其後的 tab 切換無關——結果屬於該 feed。錯誤
-// 只設該槽 err（橫幅呈現），既有列表原樣（契約 5）。
+// HomeLatestTimeline，雙形態同構；cursor／seen 各自累積）、feedSearch 走
+// Search（Task 10；§8.7 翻頁契約「各 feed 的 List AtEnd 各自觸發」——
+// final review F3 兌現：以槽內留存游標接續翻頁，Search 無 seen 參數；
+// 首頁起跑走 submitSearch）→ 經 publish 回 UI 執行緒套用。背景工作以會
+// 話子樹派發（goSession，§8.4），起跑前捕捉世代（gen）與槽，回寫前比對
+// ——世代過期（帳號切換墓碑已歸零）或槽已被換新的舊結果整批丟棄，不得
+// 污染新畫面（D18 世代邊界雙保險：cancel 斬在途、gen 防已回程；Review
+// Focus 1）。逐 feed 化（Task 8）：寫回一律指向派發時捕捉的槽 kind，與
+// 其後的 tab 切換無關——結果屬於該 feed。錯誤只設該槽 err（橫幅呈現），
+// 既有列表原樣（契約 5）。
 func (a *app) loadFeed(kind int) {
 	f := a.feeds[kind]
 	if f.busy || f.end || f.err != nil || a.sess == nil {
 		return
 	}
-	// 大聲預設（Task 8 review 釘注）：本派發僅管轄 For You／Following
-	// 兩槽——未知 kind（含 feedSearch：其載入走 submitSearch，Task 10）
-	// 一律不派發、快速失敗。須在佔用 busy 之前攔下：誤入的呼叫不得把
-	// 槽卡在 busy（AtEnd 逐框重入即永久佔住）；亦不寫 err（橫幅將成
-	// 逐框風暴）。
+	// 派發管轄（Task 8 大聲預設的收斂，final review F3）：三槽皆由本徑
+	// 翻頁——feedSearch 須已有提交過的 query（submitSearch 起跑時留
+	// 存），缺查詢詞不派發；未知 kind 一律不派發、快速失敗。須在佔用
+	// busy 之前攔下：誤入的呼叫不得把槽卡在 busy（AtEnd 逐框重入即永
+	// 久佔住）；亦不寫 err（橫幅將成逐框風暴）。
 	switch kind {
 	case feedForYou, feedFollowing:
+	case feedSearch:
+		if a.searchQuery == "" {
+			return
+		}
 	default:
 		return
 	}
 	f.busy = true
 	f.err = nil
-	sess, cursor, seen, gen := a.sess, f.cursor, f.seen, a.gen
+	sess, cursor, seen, gen, query := a.sess, f.cursor, f.seen, a.gen, a.searchQuery
 	a.goSession(func(ctx context.Context) {
 		var res *timelineResult
 		var err error
-		if kind == feedFollowing {
+		switch kind {
+		case feedFollowing:
 			res, err = sess.HomeLatest(cursor, seen) // Following＝最新時間線
-		} else {
+		case feedSearch:
+			// 搜尋接續頁：以派發時捕捉的 query 與槽內留存游標（§8.7：
+			// Search 無 seen——去重由 mergePosts 的 work_id 比對承擔）。
+			res, err = sess.Search(query, searchProduct, cursor)
+		default:
 			res, err = sess.Home(cursor, seen) // For You＝首頁推薦時間線
 		}
 		a.publish(func() {

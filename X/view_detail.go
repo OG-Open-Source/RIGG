@@ -12,8 +12,9 @@
 // WorkURL 連結。
 //
 // 宿主形態：band ≥2（≥1024）右欄並列（homeView 分流）；band <2 的窄帶
-// 沿 feed 單欄（展開狀態即幀收合，Task 14 佈局接線；detailView 建構函
-// 式為其重用面）。
+// 以全寬 detail 頁承接（final review F2 裁決 2026-11-15——§8.8 的
+// ui.Router 頁形態不予實作、延後 v1.2，DECISIONS〈v1.1 收尾登錄〉；
+// detailView 建構函式為兩形態共用面）。
 package main
 
 import (
@@ -39,9 +40,9 @@ const detailPanelWidth = float32(380)
 
 // 展開檢視並列（右欄）形態的窗寬下限為 bpLaptop（=1024，Task 14 的佈局
 // 帶界，原 Task 13 的 detailMinWidth 常數已併入）：band <2 為窄帶——列
-// 點擊不開帖、殘留 detail 於窄帶幀即時收合（兩處同一閘，見 homeView 與
-// homeFeedView 列點擊）：band <2 不渲染展開檢視，收合按鈕（只在
-// detailView）不存在，開帖或殘留將使活躍播放器無任何收合路徑。
+// 點擊同樣開帖，但以全寬 detail 頁承接（final review F2 裁決，homeView
+// 分流；feed 於展開期間不可達，收合按鈕即返回路徑，播放器生命週期隨
+// detail 不受跨帶縮放影響）。
 
 // detailMediaHeight 是展開檢視媒體區的固定高（DIP）：圖以 Fit(Contain)
 // 貼合、播放器未 Ready 時的縮圖／佔位同框，版面不隨載入跳動。

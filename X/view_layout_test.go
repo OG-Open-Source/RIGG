@@ -51,9 +51,9 @@ func TestLayoutBands(t *testing.T) {
 // TestTesterRendersThreeWidths：SetSize(768/1024/1200) 建構 app view 不
 // panic；斷言方式為 Tester 的可檢查面——HasText（Texts() 子串比對）：
 // 各帶皆應呈側欄元素（時間線 tabs 項「For You」/「Following」與帳號清單
-// 「@goated」；band 1 即有側欄，≥1024 屬其子集）。另釘展開檢視的帶閘：
-// 1024（band 2）右欄並列（收合按鈕存在）；768（band 1）不渲染且殘留
-// detail 即幀收合（T13 語義經 band 閘延續）。
+// 「@goated」；band 1 即有側欄，≥1024 屬其子集）。另釘展開檢視的宿主形
+// 態：1024（band 2）右欄並列（收合按鈕存在）；768（band 1）全寬 detail
+// 頁取代 feed（final review F2 裁決），收合返回 feed。
 func TestTesterRendersThreeWidths(t *testing.T) {
 	a := newTestApp()
 	a.sess = &fakeSession{}
@@ -78,11 +78,22 @@ func TestTesterRendersThreeWidths(t *testing.T) {
 	if a.detail == nil || !tt.HasText(detailCloseText) {
 		t.Fatalf("1024 應並列展開檢視（收合按鈕存在），detail=%v texts %q", a.detail, tt.Texts())
 	}
-	// 768（band 1）：不渲染展開檢視，殘留即幀收合。
+	// 768（band 1）：全寬展開檢視頁取代 feed（final review F2 裁決）——
+	// 收合按鈕存在、feed 標示（含側欄）不在；收合返回 feed。
 	tt.SetSize(768, 720)
 	tt.Frame()
-	if a.detail != nil || tt.HasText(detailCloseText) {
-		t.Errorf("768 不得渲染展開檢視（殘留即幀收合），detail=%v texts %q", a.detail, tt.Texts())
+	if a.detail == nil || !tt.HasText(detailCloseText) {
+		t.Fatalf("768 應全寬渲染展開檢視（收合按鈕存在），detail=%v texts %q", a.detail, tt.Texts())
+	}
+	if tt.HasText("時間線") {
+		t.Errorf("窄帶展開期間 feed 不可達（含側欄），texts %q", tt.Texts())
+	}
+	if err := tt.Click(detailCloseText); err != nil {
+		t.Fatalf("點收合按鈕: %v", err)
+	}
+	tt.Frame()
+	if a.detail != nil || !tt.HasText("時間線") {
+		t.Errorf("收合後應返回 feed（detail=%v texts %q）", a.detail, tt.Texts())
 	}
 }
 

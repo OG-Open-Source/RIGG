@@ -26,7 +26,10 @@ func typeSearch(t *testing.T, tt *ui.Tester, query string) {
 
 // TestSubmitSearchPopulatesSearchFeed：fakeSession.Search 回 fixture →
 // posts 落 feeds[feedSearch]、游標與 end 正確、busy 復位，且畫面以文字
-// 標示當前為搜尋結果（tabs 不新增第三 tab）。
+// 標示當前為搜尋結果（tabs 不新增第三 tab）。apply 以佇列模擬主執行緒
+// 時序（TestAtEndTriggersPerFeed 模板——佇列須於 NewTester 前接線）：套
+// 用延後至幀間，使「首頁結果已套用、AtEnd 尚未評估」的凍結態可斷言
+// （AtEnd 翻頁契約見 TestSearchAtEndPagesWithStoredCursor）。
 func TestSubmitSearchPopulatesSearchFeed(t *testing.T) {
 	fake := &fakeSession{
 		home: pageQueue(pageOf(mkPosts("a1", "a2"), "c2")),
@@ -34,11 +37,24 @@ func TestSubmitSearchPopulatesSearchFeed(t *testing.T) {
 			return pageOf(mkPosts("s1", "s2"), "sp2"), nil
 		},
 	}
-	a, tt := homeFixture(t, fake)
-	for i := 0; i < 3; i++ {
-		tt.Frame() // 前置：For You 首頁載入（與搜尋無關）
+	a := newTestApp()
+	a.sess = fake
+	var pending []func()
+	a.apply = func(fn func()) { pending = append(pending, fn) }
+	tt := ui.NewTester(a.view, 480, 720)
+	flush := func() {
+		for len(pending) > 0 {
+			fns := pending
+			pending = nil
+			for _, fn := range fns {
+				fn()
+			}
+		}
 	}
-	typeSearch(t, tt, "MyGO")
+	tt.Frame() // For You 首頁工作派出（結果入佇列）
+	flush()
+	typeSearch(t, tt, "MyGO") // Frame 內提交：槽起跑（busy 佔住，AtEnd 不派發）
+	flush()                   // 套用首頁結果
 	f := a.feeds[feedSearch]
 	if !a.searchOpen {
 		t.Fatal("提交後應檢視搜尋結果（searchOpen）")
@@ -58,6 +74,10 @@ func TestSubmitSearchPopulatesSearchFeed(t *testing.T) {
 	if got := countCalls(fake.callLog(), "Search"); got != 1 {
 		t.Errorf("Search 應呼叫 1 次，得 %d（日誌 %q）", got, fake.callLog())
 	}
+	// 重繪：列表以首頁結果呈現（AtEnd 評估會派發翻頁——本 fixture 第二
+	// 頁與首頁同形，去重後游標同前頁 → 到底；翻頁契約另見釘測）。
+	tt.Frame()
+	flush()
 	if !tt.HasText("搜尋結果") || !tt.HasText("貼文s1") {
 		t.Errorf("應以文字標示搜尋結果並顯示貼文，texts %q", tt.Texts())
 	}
@@ -205,5 +225,60 @@ func TestSearchBusyGuardsResubmit(t *testing.T) {
 	f := a.feeds[feedSearch]
 	if f.busy || !sameStrings(workIDs(f.posts), []string{"s1"}) || !f.end {
 		t.Errorf("套用後應完成：busy=%v posts=%q end=%v", f.busy, workIDs(f.posts), f.end)
+	}
+}
+
+// TestSearchAtEndPagesWithStoredCursor（§8.7 翻頁契約，final review F3 釘
+// 測）：首頁結果帶非空游標 → 列表 AtEnd 觸發第二頁——Search 以槽內留存
+// 游標呼叫（無 seen 參數）、結果去重合併入同一槽；第二頁游標空 → 到底、
+// 不再觸發。apply 以佇列模擬主執行緒時序（TestAtEndTriggersPerFeed 模
+// 板）：套用延後至幀間，AtEnd 於其後的框反映上一框版面。
+func TestSearchAtEndPagesWithStoredCursor(t *testing.T) {
+	var cursors []string
+	fake := &fakeSession{search: func(q, product, cursor string) (*timelineResult, error) {
+		cursors = append(cursors, cursor)
+		if cursor == "" {
+			return pageOf(mkPosts("s1", "s2"), "sp2"), nil // 首頁：游標 sp2
+		}
+		return pageOf(mkPosts("s2", "s3"), ""), nil // 第二頁：含重複、游標空 → 到底
+	}}
+	a := newTestApp()
+	a.sess = fake
+	var pending []func()
+	a.apply = func(fn func()) { pending = append(pending, fn) }
+	tt := ui.NewTester(a.view, 480, 720)
+	flush := func() {
+		for len(pending) > 0 {
+			fns := pending
+			pending = nil
+			for _, fn := range fns {
+				fn()
+			}
+		}
+	}
+	typeSearch(t, tt, "MyGO") // Frame 內提交：feedSearch 槽起跑（busy 佔住）
+	flush()                   // 套用首頁結果
+	f := a.feeds[feedSearch]
+	if !sameStrings(workIDs(f.posts), []string{"s1", "s2"}) || f.cursor != "sp2" || f.end {
+		t.Fatalf("前置：首頁結果應落槽（游標留存），posts=%q cursor=%q end=%v", workIDs(f.posts), f.cursor, f.end)
+	}
+	if len(cursors) != 1 || cursors[0] != "" {
+		t.Fatalf("前置：首頁應以空游標起跑，cursors=%q", cursors)
+	}
+	tt.Frame() // AtEnd → 以留存游標派發第二頁
+	flush()
+	if len(cursors) != 2 || cursors[1] != "sp2" {
+		t.Errorf("AtEnd 應以槽內留存游標翻頁，cursors=%q", cursors)
+	}
+	if !sameStrings(workIDs(f.posts), []string{"s1", "s2", "s3"}) {
+		t.Errorf("第二頁結果應去重合併入槽，得 %q", workIDs(f.posts))
+	}
+	if !f.end || f.cursor != "" {
+		t.Errorf("第二頁游標空應到底：end=%v cursor=%q", f.end, f.cursor)
+	}
+	tt.Frame() // 到底後不得再觸發
+	flush()
+	if got := countCalls(fake.callLog(), "Search"); got != 2 {
+		t.Errorf("到底後不得再觸發，Search 呼叫 %d 次（日誌 %q）", got, fake.callLog())
 	}
 }

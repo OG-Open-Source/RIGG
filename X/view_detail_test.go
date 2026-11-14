@@ -323,11 +323,12 @@ func TestRowClickOpensDetailNotLink(t *testing.T) {
 	}
 }
 
-// TestNarrowWindowRowClickDoesNotOpenDetail（窄窗閘，Important 1 修復釘
-// 注）：窗寬 <1024 時展開檢視不渲染（收合按鈕只在 detailView），點媒體
-// 列若開帖將建出無任何收合路徑的活躍播放器（video 背景載入）——列點擊
-// 與右欄並列同一寬度閘：openPlayer 接縫零呼叫、detail／player 保持 nil。
-func TestNarrowWindowRowClickDoesNotOpenDetail(t *testing.T) {
+// TestNarrowBandRowClickOpensDetail（final review F2 釘測，取代 T13 的
+// 過渡窄帶閘釘注）：窄帶（900px，band 1）點媒體列同樣開啟展開檢視——以
+// 全寬 detail 頁承接（§8.8 的 Router 頁形態不實作，控制器裁決
+// 2026-11-15）：openPlayer 以媒體 URL 呼叫、feed 標示（含側欄）不可達、
+// 帖文渲染；收合按鈕（detailView 內）closeDetail 返回 feed。
+func TestNarrowBandRowClickOpensDetail(t *testing.T) {
 	calls := 0
 	stubOpenPlayer(t, func(string) (player, error) {
 		calls++
@@ -337,30 +338,47 @@ func TestNarrowWindowRowClickDoesNotOpenDetail(t *testing.T) {
 	fake := &fakeSession{home: pageQueue(pageOf([]post{p}, ""))}
 	a := newTestApp()
 	a.sess = fake
-	tt := ui.NewTester(a.view, 900, 720) // 窄窗：<1024
+	tt := ui.NewTester(a.view, 900, 720) // 窄帶：900px（band 1）
 	for i := 0; i < 3; i++ {
-		tt.Frame() // feed 載入（窄窗沿 feed 單欄）
+		tt.Frame() // feed 載入（窄帶沿 feed 單欄＋側欄）
 	}
 	if err := tt.Click(p.Title); err != nil {
 		t.Fatalf("點列主體: %v", err)
 	}
 	tt.Frame()
-	if calls != 0 {
-		t.Errorf("窄窗點媒體列不得建播放器（openPlayer 零呼叫），calls=%d", calls)
+	if a.detail == nil || a.detail.WorkID != p.WorkID {
+		t.Fatalf("窄帶點媒體列應開啟展開檢視，detail=%v", a.detail)
 	}
-	if a.player != nil {
-		t.Errorf("窄窗點媒體列不得建立活躍播放器，player=%v", a.player)
+	if calls != 1 {
+		t.Errorf("video 帖應建播放器恰一次（openPlayer），calls=%d", calls)
 	}
-	if a.detail != nil {
-		t.Errorf("窄窗點列不得開啟展開檢視，detail=%v", a.detail)
+	if a.player == nil {
+		t.Error("窄帶開帖應建立活躍播放器")
+	}
+	if tt.HasText("時間線") {
+		t.Errorf("展開期間 feed 不可達（全寬 detail 頁，含側欄），texts %q", tt.Texts())
+	}
+	if !tt.HasText(p.Title) {
+		t.Errorf("全寬展開檢視應渲染帖文，texts %q", tt.Texts())
+	}
+	// 收合返回 feed。
+	if err := tt.Click(detailCloseText); err != nil {
+		t.Fatalf("點收合按鈕: %v", err)
+	}
+	tt.Frame()
+	if a.detail != nil || a.player != nil {
+		t.Errorf("收合應歸零 detail／player，detail=%v player=%v", a.detail, a.player)
+	}
+	if !tt.HasText("時間線") {
+		t.Errorf("收合後應返回 feed，texts %q", tt.Texts())
 	}
 }
 
-// TestNarrowResizeCollapsesDetail（窄窗閘第二入口，Important 1 修復釘注）：
-// ≥1024 開帖（播放器活躍）後縮窗至 <1024 → 窄幀遇殘留 detail 即幀收合
-// （closeDetail，§8.6「離開展開檢視」語義）：播放器 Close 恰一次、
-// detail／player 歸零——展開檢視已不渲染，收合按鈕隨之消失。
-func TestNarrowResizeCollapsesDetail(t *testing.T) {
+// TestNarrowResizeRendersDetailFullWidth（final review F2 釘測）：≥1024
+// 開帖（播放器活躍）後縮窗至 <1024 → 展開檢視以全寬 detail 頁延續（非
+// 收合）：播放器不被關閉（生命週期隨 detail，§8.6）、收合按鈕仍在；收
+// 合按鈕路徑 closeDetail 歸零 detail／player 並返回 feed。
+func TestNarrowResizeRendersDetailFullWidth(t *testing.T) {
 	var players []*fakePlayer
 	stubOpenPlayer(t, func(string) (player, error) {
 		p := &fakePlayer{}
@@ -376,11 +394,24 @@ func TestNarrowResizeCollapsesDetail(t *testing.T) {
 		t.Fatalf("前置：展開檢視應開啟且播放器活躍，detail=%v player=%v", a.detail, a.player)
 	}
 	tt.SetSize(900, 720)
-	tt.Frame() // 窄幀：homeView 遇殘留 detail 即幀收合
+	tt.Frame() // 窄幀：全寬 detail 頁延續
+	if a.detail == nil || a.player == nil {
+		t.Errorf("縮窗後展開檢視應以全寬頁延續，detail=%v player=%v", a.detail, a.player)
+	}
+	if len(players) != 1 || players[0].closes != 0 {
+		t.Errorf("縮窗不得關閉播放器（檢視延續），players=%d closes=%d", len(players), players[len(players)-1].closes)
+	}
+	if !tt.HasText(detailCloseText) {
+		t.Fatalf("窄帶應渲染收合按鈕，texts %q", tt.Texts())
+	}
+	if err := tt.Click(detailCloseText); err != nil {
+		t.Fatalf("點收合按鈕: %v", err)
+	}
+	tt.Frame()
 	if a.detail != nil || a.player != nil {
-		t.Errorf("縮窗後殘留 detail 應被收合，detail=%v player=%v", a.detail, a.player)
+		t.Errorf("收合應歸零 detail／player，detail=%v player=%v", a.detail, a.player)
 	}
 	if len(players) != 1 || players[0].closes != 1 {
-		t.Errorf("縮窗收合應 Close 播放器恰一次，players=%d closes=%d", len(players), players[len(players)-1].closes)
+		t.Errorf("收合應 Close 播放器恰一次，players=%d closes=%d", len(players), players[len(players)-1].closes)
 	}
 }

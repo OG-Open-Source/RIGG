@@ -85,8 +85,9 @@ type app struct {
 	auth *auth.Auth // 當前引擎會話的 XAuth（quit flush 用；engineSession 時設置）
 
 	// activeStore 是當前活躍帳號的憑證庫儲存層（quit flush 目標；§8.3 寫回
-	// 帳號化，Task 6 切換序列替換）。nil ⇒ quit flush 沿用 AppState 既有
-	// 儲存層（login 流尚無帳號、雙寫期的 v1 行為）。
+	// 帳號化）：首次登入成功即接線（submitLogin default 分支，final review
+	// F1）、切換成功時替換（runSwitch）。nil ⇒ 登入前／登出後——quit
+	// flush 沿用 AppState 既有儲存層（雙寫期的 v1 行為）。
 	activeStore auth.CookieStore
 
 	// —— 帳號切換（Task 6；設計 §8.4／§8.5）——
@@ -272,8 +273,9 @@ func (a *app) publish(fn func()) {
 }
 
 // startSession 經接縫建構新會話：正式路徑 assembleSession（login 流此時
-// 尚無 Account——空行、不接儲存層組裝，備料與驗證由 Validate 完成，帳號
-// 確立後的活躍儲存層接線屬 Task 6 切換序列）；測試注入替身。組裝錯誤
+// 尚無 Account——空行、不接儲存層組裝，備料與驗證由 Validate 完成；會話
+// 本身不帶儲存層，活躍儲存層由 submitLogin default 分支於成功後接線
+// activeStore——final review F1 最小接線裁決）；測試注入替身。組裝錯誤
 // （代理 fail-closed、註冊表載入）由 login 頁錯誤區呈現。
 func (a *app) startSession() (xSession, error) {
 	if a.newSess != nil {
@@ -367,8 +369,9 @@ func (a *app) switchTo(userID string) {
 // （7）——中途崩潰下次啟動以索引 Current 為準重載）：
 //
 //  1. flush 當前：activeStore.Save(當前 cookieLine)（write-through 已同
-//     步，此為兜底——以 Flush 的比對語義冪等寫入；login 流尚無活躍儲存
-//     層時無兜底可寫，其憑證由 persistLogin 落盤）。
+//     步，此為兜底——以 Flush 的比對語義冪等寫入；首次登入後即有活躍儲
+//     存層（F1 接線），nil 僅餘登入前／替身情境——其憑證由 persistLogin
+//     落盤）。
 //  2. 索引 Current = 目標 → saveIndex。
 //  3. sessCancel()（斬斷舊在途）。
 //  4. newSessionFor(目標)（無網路；失敗 → 回滾索引、原會話不動、錯誤區）。

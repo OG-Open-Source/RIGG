@@ -353,3 +353,48 @@ func TestPersistLoginFlushesDespiteDualWriteFailure(t *testing.T) {
 		t.Fatalf("雙寫失敗時帳號索引應照常寫入，得 %+v", idx)
 	}
 }
+
+// TestFirstLoginWiresActiveStore（final review F1 釘測）：首次登入
+// （submitLogin 的 default 分支）成功後 a.activeStore 非 nil——quit flush
+// 與切換序列步驟 1 的兜底 flush 自首登即落活躍帳號鍵，毋須等待首次切換
+// （旧徑 activeStore 恒 nil 直到 runSwitch）；其 Load 回帳號 JSON 的
+// CookieLine（accountCookieStore adapter 語義）。真實 persistLogin 以
+// engineSession 組裝、須真網路驗證，帳號鍵由測試以合成值預置代表其落盤
+// 產物（submitLogin 的 default 分支只負責接線）。
+func TestFirstLoginWiresActiveStore(t *testing.T) {
+	withAccountService(t)
+	cleanupSecrets(t, indexKey, accountKey("9801"))
+	const cookie = "auth_token=abc; ct0=def" // typeCookie 鍵入的同一合成行
+	ctx := context.Background()
+	if err := saveAccount(ctx, Account{UserID: "9801", ScreenName: "goated", Name: "合成帳號", CookieLine: cookie}); err != nil {
+		t.Fatalf("saveAccount: %v", err)
+	}
+	a := newTestApp()
+	fake := &fakeSession{validate: func(string) (viewerInfo, error) {
+		return viewerInfo{UserID: "9801", ScreenName: "goated", Name: "合成帳號"}, nil
+	}}
+	a.newSess = func() (xSession, error) { return fake, nil }
+	persisted := 0
+	a.onLoginPersist = func(xSession, viewerInfo, string) error { persisted++; return nil }
+	tt := ui.NewTester(a.view, 480, 360)
+	typeCookie(t, tt)
+	if err := tt.Click("登入"); err != nil {
+		t.Fatal(err)
+	}
+	if persisted != 1 {
+		t.Errorf("首次落盤應由 login 流完成恰一次，得 %d", persisted)
+	}
+	if a.sess == nil {
+		t.Fatal("前置：驗證通過應導向 home")
+	}
+	if a.activeStore == nil {
+		t.Fatal("首次登入後 activeStore 應已接線（F1：write-through 兜底自首登成立）")
+	}
+	line, err := a.activeStore.Load(ctx)
+	if err != nil {
+		t.Fatalf("activeStore.Load: %v", err)
+	}
+	if line != cookie {
+		t.Errorf("activeStore 應落活躍帳號鍵（Load 回 CookieLine），得 %q，欲得 %q", line, cookie)
+	}
+}
