@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -15,11 +16,25 @@ import (
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/xerrors"
 )
 
-// loginView 繪製 login 畫面並處理提交（按鈕或輸入欄 Enter）。
+// loginView 繪製 login 畫面並處理提交（按鈕或輸入欄 Enter）。Task 14：
+// 帳號選單的新增帳號／失效重登入口共用本畫面（loginMode 分流）——變體
+// 標題帶入口語義（重登帶目標帳號標籤），並提供「返回」回 home（首次登
+// 入形無返回：無 home 可回）。
 func (a *app) loginView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Center().Gap(16).Padding(24).Children(func() {
-		ui.Text(c, "X").FontSize(26).Bold()
+		title := "X"
+		switch a.loginMode {
+		case loginModeAdd:
+			title = "新增帳號"
+		case loginModeRelogin:
+			if acc, ok := a.accountByID(a.loginUserID); ok {
+				title = "重新貼上 Cookie——" + a.accountLabel(acc)
+			} else {
+				title = "重新貼上 Cookie"
+			}
+		}
+		ui.Text(c, title).FontSize(26).Bold()
 		// 連線狀態列（startToken 的解析結果）：D10 下直連是基線，偵測或
 		// 配置到代理時升級顯示。
 		proxyLine := "連線：直連模式（未配置代理）"
@@ -55,16 +70,32 @@ func (a *app) loginView(c *ui.Context) {
 				a.submitLogin()
 			}
 		})
+		// 變體的返回入口（回 home；輸入與錯誤一併復位——resetLoginForm）。
+		if a.loginMode != loginModeNone {
+			if ui.Button(c, "返回").Clicked() {
+				a.resetLoginForm()
+			}
+		}
 	})
 }
 
-// submitLogin 處理提交：防抖閘門（進行中或已登入一律忽略，契約 6）→
-// 背景組裝會話並驗證（newSession → Validate＝PrepareAuth＋Viewer）→
-// 成功時首次落盤（契約 2）→ 經 publish 回 UI 執行緒套用結果。背景工作
-// 絕不直接改動 app 狀態（併發面見 app 註解）。
+// submitLogin 處理提交（契約 6 防抖；Task 14 擴充 login view 變體）：
+// 首次登入形沿原徑——背景組裝會話並驗證（newSession → Validate＝
+// PrepareAuth＋Viewer）→ 成功時首次落盤（契約 2）→ publish 直接替換
+// a.sess 導向 home。新增帳號（loginModeAdd，home 的帳號選單進入）：驗證
+// ＋persistLogin 落盤（REQ-WEB-070 同鍵覆蓋＋索引追加）後沿 switchTo 路
+// 徑原地切換——切換序列的世代邊界（gen++）與三槽墓碑不可省，不走首次
+// 登入的直接替換。失效重登（loginModeRelogin）：驗證身分須為目標帳號
+//（REQ-WEB-069 身分與憑證綁定），通過即以新 cookie 行覆蓋同鍵、清除失效
+// 標記，再沿 switchTo 原地重試切換（序列的 Validate 對新值重驗——TTL 外
+// 必然重驗；再失敗即再標失效，收斂同 switchTo）。模式與重登目標於派發時
+// 捕捉（UI 執行緒）：背景只用捕捉值，不讀共享欄位（app 併發模型）。
 func (a *app) submitLogin() {
-	if a.loginBusy || a.sess != nil {
-		return // 防抖：提交進行中（或已登入）再點一律忽略
+	if a.loginBusy {
+		return
+	}
+	if a.loginMode == loginModeNone && a.sess != nil {
+		return // 防抖：首次登入形已登入再點一律忽略
 	}
 	cookie := strings.TrimSpace(a.cookieInput)
 	if cookie == "" {
@@ -73,27 +104,77 @@ func (a *app) submitLogin() {
 	}
 	a.loginBusy = true
 	a.loginErr = nil
+	mode := a.loginMode
+	relogTarget, _ := a.accountByID(a.loginUserID) // 重登目標快照（身分欄位保留）
 	a.goAsync(func(ctx context.Context) {
 		sess, err := a.startSession()
 		var info viewerInfo
 		if err == nil {
 			info, err = sess.Validate(cookie)
 		}
+		relogUpdated := Account{}
 		if err == nil {
-			// 契約 2：首次落盤由 login 流完成（以身分建帳號＋dualWrite；
-			// 正式路徑經 AppState.Flush 冪等寫入；其後 Sender 的
-			// write-through 吸收輪替）。落盤失敗不阻擋登入——帳號落盤／
-			// 雙寫／Flush 錯誤皆記於 AppState.Err（persistLogin 內，
-			// 同 Flush 自記語義）；正式路徑回 nil，`_ =` 只容測試替身。
-			_ = a.persistLogin(sess, info, cookie)
+			switch mode {
+			case loginModeAdd:
+				// 契約 2 同形：首次落盤由 login 流完成（同 UserID 覆蓋
+				// 同鍵 REQ-WEB-070；錯誤記 AppState.Err、不阻擋後續切
+				// 換——切換序列的索引寫入為真源）。臨時會話棄用：切換
+				// 序列另建目標會話（transport 收斂 best-effort）。
+				_ = a.persistLogin(sess, info, cookie)
+				_ = sess.Close()
+			case loginModeRelogin:
+				switch {
+				case relogTarget.UserID == "":
+					err = &xerrors.InvalidInputError{Msg: "找不到要重新登入的帳號"}
+					_ = sess.Close()
+				case info.UserID != relogTarget.UserID:
+					err = &xerrors.InvalidInputError{Msg: "貼上的 Cookie 不屬於帳號 @" + relogTarget.ScreenName}
+					_ = sess.Close()
+				default:
+					relogUpdated = relogTarget
+					relogUpdated.CookieLine = cookie
+					if serr := saveAccount(ctx, relogUpdated); serr != nil {
+						// 落盤失敗不阻擋重試切換：切換序列以儲存層真源
+						// 驗證，舊值失敗即再標失效（錯誤先行記錄，同
+						// persistLogin 的 setErr 語義）。
+						a.state.setErr(fmt.Errorf("relogin: %w", serr))
+					}
+					_ = sess.Close()
+				}
+			default:
+				// 契約 2：首次落盤由 login 流完成（以身分建帳號＋dualWrite；
+				// 正式路徑經 AppState.Flush 冪等寫入；其後 Sender 的
+				// write-through 吸收輪替）。落盤失敗不阻擋登入——帳號落盤／
+				// 雙寫／Flush 錯誤皆記於 AppState.Err（persistLogin 內，
+				// 同 Flush 自記語義）；正式路徑回 nil，`_ =` 只容測試替身。
+				_ = a.persistLogin(sess, info, cookie)
+			}
 		}
 		a.publish(func() {
 			a.loginBusy = false
 			a.loginErr = err
-			if err == nil {
+			if err != nil {
+				return
+			}
+			switch mode {
+			case loginModeAdd:
+				// 快照即刻可見（選單免重跑 warmup）＋原地切換至新帳號。
+				a.upsertAccount(Account{UserID: info.UserID, ScreenName: info.ScreenName, Name: info.Name, CookieLine: cookie})
+				a.resetLoginForm()
+				a.switchTo(info.UserID)
+			case loginModeRelogin:
+				a.updateAccount(relogUpdated)
+				a.resetLoginForm()
+				a.switchTo(relogUpdated.UserID)
+			default:
 				a.sess = sess
 				if es, ok := sess.(*engineSession); ok {
 					a.auth = es.auth // quit flush 用
+				}
+				a.activeID = info.UserID
+				a.syncAccountSelection()
+				if info.UserID != "" {
+					a.upsertAccount(Account{UserID: info.UserID, ScreenName: info.ScreenName, Name: info.Name, CookieLine: cookie})
 				}
 			}
 		})

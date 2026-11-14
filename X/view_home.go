@@ -1,12 +1,15 @@
-// view_home：home 畫面——For You／Following 兩個時間線（ui.Tabs 切換，
-// feeds 三槽隔離：切換只換渲染的槽，狀態互不污染；feedSearch 槽由 Task
-// 10 的搜尋結果使用——ephemeral，行為面見 view_search.go）、頂列搜尋入
-// 口（Enter 提交；點回任一 tab 關閉搜尋）、捲動近底觸發翻頁（逐 feed）、
-// 到底提示、錯誤橫幅（不清列表，REQ-LOG-042/043：任何錯誤絕不清憑證，也
-// 不清已載內容）。翻頁觸發（契約 3/4）：feed 未載入，或其列表於上一框
-// 已顯示到底（ui.List 的 AtEnd 語義涵蓋「捲動近底」與「內容不足一屏」）；
-// Cursor 空字串（或與前一頁相同）→ 到底提示、不再觸發。去重與 seen 累
-// 積見 mergePosts。
+// view_home：home 畫面（Task 14 四帶佈局，D20）——頂列（Toolbar）恆顯：
+// 左上帳號選單（MenuButton／band 0 收合為 Select；清單／新增／移除＋
+// Modal 確認）、右上搜尋框（Enter 提交；點回任一 tab 或「返回時間線」
+// 關閉搜尋）；無下方 bar（需求方裁決）。左側欄（band ≥1）承載帳號清單
+// ＋tabs；For You／Following 兩個時間線（feeds 三槽隔離：切換只換渲染
+// 的槽，狀態互不污染；feedSearch 槽由 Task 10 的搜尋結果使用——
+// ephemeral，行為面見 view_search.go）、捲動近底觸發翻頁（逐 feed）、
+// 到底提示、錯誤橫幅（不清列表，REQ-LOG-042/043：任何錯誤絕不清憑證，
+// 也不清已載內容）。翻頁觸發（契約 3/4）：feed 未載入，或其列表於上一
+// 框已顯示到底（ui.List 的 AtEnd 語義涵蓋「捲動近底」與「內容不足一
+// 屏」）；Cursor 空字串（或與前一頁相同）→ 到底提示、不再觸發。去重與
+// seen 累積見 mergePosts。
 package main
 
 import (
@@ -41,60 +44,299 @@ type timelineState struct {
 // homeEndText 是到底提示文案（契約 4）。
 const homeEndText = "已載入全部貼文"
 
-// homeView 繪製 home 畫面：無展開貼文時為 feed（homeFeedView）；展開檢
-// 視開啟且窗寬 ≥1024 時右欄並列（feed｜detailView，Task 13 宿主形態）
-//——<1024 的 Router 頁形態屬 Task 14 佈局接線，本任務窄窗沿 feed 單欄
-//（展開狀態保留，Task 14 接線後呈現）。
+// sidebarWidth 是左側欄寬（DIP；MyGO Sidebar 的建議寬度）。
+const sidebarWidth = float32(220)
+
+// accountCapText 是「新增帳號」達帳號上限時的提示文案（D19：上限呈提示
+// 態，不解鎖路徑）。
+const accountCapText = "最多 5 個帳號——請先移除一個"
+
+// 側欄時間線 tabs 的項目 id（Sidebar 以 id 記選擇；帳號項以 user_id 為
+// id——前綴區隔，兩者不碰撞）。
+const (
+	sideIDForYou    = "feed-foryou"
+	sideIDFollowing = "feed-following"
+)
+
+// homeView 繪製 home 畫面（Task 14 四帶佈局，D20：頂列恆顯——左上帳號
+// 選單、右上搜尋框；無下方 bar）：
+//
+//   - band 0（<768）：單欄＋頂列收合（帳號 ui.Select 下拉），tabs 仍於
+//     欄頂（無側欄）。
+//   - band 1（768–1023）：兩欄——左側欄（帳號清單＋tabs）＋時間線。
+//   - band 2（1024–1199）：完整版型——側欄＋時間線＋展開檢視並列
+//    （a.detail 非 nil 時右欄 detailView）。
+//   - band 3（≥1200）：同 band 2＋內容欄 max-width 640 置中、兩側留白。
+//
+// band <2 不渲染展開檢視：殘留 detail 即幀收合（closeDetail，冪等；T13
+// 語義經 band 閘延續——收合按鈕只在 detailView，不收合將使活躍播放器無
+// 收合路徑）。移除帳號的確認 Modal 於各帶頂層呈現；切換失敗的錯誤區
+//（switchErr）呈於頂列之下。
 func (a *app) homeView(c *ui.Context) {
-	if a.detail == nil {
-		a.homeFeedView(c)
-		return
-	}
-	if w, _ := c.Size(); w < detailMinWidth {
-		// 窄窗（<1024）沿 feed 單欄（Task 14 的 Router 頁形態屬其佈局
-		// 接線）：展開檢視本幀不渲染，收合按鈕（只在 detailView）隨之
-		// 消失——resize 入口（≥1024 開帖後縮窗）若不收合，殘留的活躍
-		// 播放器將無任何收合路徑。故視覺上已消失即視為「離開展開檢視」
-		//（§8.6 語義）：即幀 closeDetail（冪等；同幀重建自行收斂，T14
-		// 換 Router 接線時一併移除）。
+	w, _ := c.Size()
+	band := a.layoutBand(w)
+	if band < 2 && a.detail != nil {
+		// 帶外（band 0/1）展開檢視本幀不渲染，收合按鈕（只在
+		// detailView）隨之消失——resize 入口（≥1024 開帖後縮窗）若不
+		// 收合，殘留的活躍播放器將無任何收合路徑。故視覺上已消失即視
+		// 為「離開展開檢視」（§8.6 語義）：即幀 closeDetail。
 		a.closeDetail()
-		a.homeFeedView(c)
+	}
+	// 選單一律以主題彈出呈現（PopoverMenus）：與自繪 UI 同貌，內窗可檢
+	// 查（Menu／ChooseMenuItem／Texts）。
+	if c.MenuPresentation() != ui.PopoverMenus {
+		c.SetMenuPresentation(ui.PopoverMenus)
+	}
+	ui.Column(c).Fill().Children(func() {
+		a.homeToolbar(c, band)
+		if a.switchErr != nil {
+			// 帳號選單錯誤區（switchErr，Task 8 接線由本任務的選單落
+			// 地）：最近一次切換失敗的文案；成功切換即清除（runSwitch）。
+			// 既有內容原樣（REQ-LOG-042/043 同形：僅顯示）。
+			t := c.Theme()
+			ui.Row(c).Padding(8, 16).AlignItems(ui.Center).Background(t.Surface).Children(func() {
+				ui.Text(c, Sanitize(errorText(a.switchErr))).TextColor(t.Danger).Grow(1)
+			})
+		}
+		if band == 0 {
+			a.homeFeedView(c, band)
+		} else {
+			ui.Row(c).Fill().Children(func() {
+				a.homeSidebar(c)
+				// feed 欄：≥1200 內容 max-width 640 置中（AlignItems
+				// Center 置中其 max-width 卡片欄，D20）。
+				fc := ui.Column(c).Grow(1)
+				if band >= 3 {
+					fc = fc.AlignItems(ui.Center)
+				}
+				fc.Children(func() {
+					a.homeFeedView(c, band)
+				})
+				if band >= 2 && a.detail != nil {
+					d := *a.detail // 幀內快照：收合按鈕於本幀歸零 detail 不影響本幀渲染
+					ui.Column(c).Width(detailPanelWidth).Background(c.Theme().Surface).Children(func() {
+						a.detailView(c, d)
+					})
+				}
+			})
+		}
+	})
+	a.removeModal(c)
+}
+
+// homeToolbar 繪製頂列（D20：恆顯）：左上帳號選單（band 0 收合為
+// ui.Select 下拉；其餘帶 ui.MenuButton）、右上搜尋框（Task 10 入口整
+// 合——Enter 提交 submitSearch，空 query 由其忽略）。無下方 bar（需求
+// 方裁決：Desktop only）。
+func (a *app) homeToolbar(c *ui.Context, band int) {
+	ui.Toolbar(c, func() {
+		if band == 0 {
+			a.accountSelect(c)
+		} else {
+			a.accountMenu(c)
+		}
+		ui.Spacer(c)
+		in := ui.TextInput(c, &a.searchInput).Placeholder("搜尋貼文").Label("搜尋")
+		if band == 0 {
+			in = in.Width(160) // 窄帶收合：固定窄寬（其餘帶固定寬、Spacer 推右）
+		} else {
+			in = in.Width(320)
+		}
+		if in.Submitted() {
+			a.submitSearch(a.searchInput)
+		}
+	})
+}
+
+// accountMenu 繪製左上帳號選單（ui.MenuButton，Task 14／D19）：各帳號
+//（accountLabel：失效者加「（失效）」，點擊失效者走「重新貼上 Cookie」
+// 入口、活躍者勾選無操作、其餘 switchTo）＋「新增帳號」（達 maxAccounts
+// 呈提示態——禁用＋上限文案 Subtitle）＋「移除 @xxx」（開 Modal 二次確
+// 認）。切換進行中（switchBusy）動作全數禁用（帳號選單 Task 8 接線：
+// switchBusy 期間禁再切換）。按鈕文字為活躍帳號（無則「帳號」），元件
+// Label「帳號選單」供輔助技術與測試定位。
+func (a *app) accountMenu(c *ui.Context) {
+	label := "帳號"
+	if acc, ok := a.accountByID(a.activeID); ok {
+		label = a.accountLabel(acc)
+	}
+	ui.MenuButton(c, label, func(m *ui.Menu) {
+		for _, acc := range a.accounts {
+			if m.Item(a.accountLabel(acc)).Checked(acc.UserID == a.activeID).Disabled(a.switchBusy).Chosen() {
+				if a.accInvalid[acc.UserID] {
+					a.openRelogin(acc.UserID) // 失效者：重新貼上 Cookie 入口
+				} else if acc.UserID != a.activeID {
+					a.switchTo(acc.UserID) // 背景切換（switchBusy 防再入）
+				}
+			}
+		}
+		m.Separator()
+		// 新增帳號：上限（maxAccounts=5，D19）呈提示態——禁用＋上限文
+		// 案（Subtitle；彈出式選單於標籤下第二行呈現）。
+		atCap := len(a.accounts) >= maxAccounts
+		add := m.Item("新增帳號").Disabled(a.switchBusy || atCap)
+		if atCap {
+			add = add.Subtitle(accountCapText)
+		}
+		if add.Chosen() {
+			a.beginLoginVariant(loginModeAdd, "")
+		}
+		m.Separator()
+		for _, acc := range a.accounts {
+			if m.Item("移除 @"+acc.ScreenName).Disabled(a.switchBusy).Chosen() {
+				a.removeUserID = acc.UserID
+				a.removeOpen = true // Modal 二次確認（removeModal）
+			}
+		}
+	}).Label("帳號選單")
+}
+
+// accountSelect 是 band 0 的帳號收合（ui.Select 下拉，D20）：選項為帳號
+// 標籤（失效者含「（失效）」）；選擇即分派——失效者走重登入口、其餘切換
+//（活躍者無操作）。切換進行中禁用（防再入造成呈現錯位——同步由
+// syncAccountSelection 於序列收斂時回寫）。
+func (a *app) accountSelect(c *ui.Context) {
+	if len(a.accounts) == 0 {
 		return
 	}
-	d := *a.detail // 幀內快照：收合按鈕於本幀歸零 detail 不影響本幀渲染
-	ui.Row(c).Fill().Children(func() {
-		ui.Column(c).Grow(1).Children(func() {
-			a.homeFeedView(c)
+	opts := make([]string, 0, len(a.accounts))
+	byLabel := make(map[string]string, len(a.accounts))
+	for _, acc := range a.accounts {
+		label := a.accountLabel(acc)
+		opts = append(opts, label)
+		byLabel[label] = acc.UserID
+	}
+	sel := ui.Select(c, &a.selectAcc, opts).Disabled(a.switchBusy)
+	if sel.Changed() {
+		if uid, ok := byLabel[a.selectAcc]; ok && uid != a.activeID {
+			if a.accInvalid[uid] {
+				a.openRelogin(uid)
+			} else {
+				a.switchTo(uid)
+			}
+		}
+	}
+}
+
+// openRelogin 進入失效帳號的「重新貼上 Cookie」入口（login view 變體，
+// D20/§8.5）：目標帳號預標（loginUserID），提交成功 → 更新該帳號 cookie
+//（覆蓋同鍵）→ 沿 switchTo 原地重試切換（submitLogin 的 relogin 分支）。
+func (a *app) openRelogin(userID string) {
+	a.beginLoginVariant(loginModeRelogin, userID)
+}
+
+// accountLabel 是帳號的顯示標籤（選單／側欄／窄帶下拉）：@screen_name；
+// 失效者加「（失效）」（accInvalid，Task 6 呈現語義）。
+func (a *app) accountLabel(acc Account) string {
+	label := "@" + acc.ScreenName
+	if a.accInvalid[acc.UserID] {
+		label += "（失效）"
+	}
+	return label
+}
+
+// homeSidebar 繪製左側欄（band ≥1，D20）：時間線 tabs（For You／
+// Following）＋帳號清單（失效者標記）。選擇記於 sideSel（ui.Sidebar 的
+// id 語義：帳號項 id=user_id、tabs 項 id=sideID*）；Changed 分派見
+// sidebarChosen。切換進行中帳號項禁用（switchBusy 禁再切換）。
+func (a *app) homeSidebar(c *ui.Context) {
+	sb := ui.Sidebar(c, &a.sideSel, func() {
+		ui.SidebarSection(c, "時間線", nil, func() {
+			ui.SidebarItem(c, sideIDForYou, nil, "For You")
+			ui.SidebarItem(c, sideIDFollowing, nil, "Following")
 		})
-		ui.Column(c).Width(detailPanelWidth).Background(c.Theme().Surface).Children(func() {
-			a.detailView(c, d)
+		ui.SidebarSection(c, "帳號", nil, func() {
+			for _, acc := range a.accounts {
+				ui.SidebarItem(c, acc.UserID, nil, a.accountLabel(acc)).Disabled(a.switchBusy)
+			}
+		})
+	}).Width(sidebarWidth)
+	if sb.Changed() {
+		a.sidebarChosen(a.sideSel)
+	}
+}
+
+// sidebarChosen 分派側欄選擇：時間線項 → activeFeed（搜尋開啟時一併關
+// 閉——ephemeral 槽歸零，同 tabs 點回語義）；帳號項 → 失效者走重登入口、
+// 活躍者無操作、其餘 switchTo（背景切換，switchBusy 防再入）。失效者不
+// 可為選擇（其項點擊是動作而非切換）——呈現回歸活躍帳號。
+func (a *app) sidebarChosen(id string) {
+	switch id {
+	case sideIDForYou:
+		if a.searchOpen {
+			a.closeSearch()
+		}
+		a.activeFeed = feedForYou
+	case sideIDFollowing:
+		if a.searchOpen {
+			a.closeSearch()
+		}
+		a.activeFeed = feedFollowing
+	default:
+		if a.accInvalid[id] {
+			a.openRelogin(id)
+			a.syncAccountSelection()
+			return
+		}
+		if id != a.activeID {
+			a.switchTo(id)
+		}
+	}
+}
+
+// removeModal 繪製移除帳號的二次確認（ui.Modal）：確認走 removeConfirm
+//（背景 deleteAccount）；取消／Escape／點外由 Modal 的 *open 語義收起。
+func (a *app) removeModal(c *ui.Context) {
+	if !a.removeOpen {
+		return
+	}
+	ui.Modal(c, &a.removeOpen, func() {
+		title := "移除帳號"
+		if acc, ok := a.accountByID(a.removeUserID); ok {
+			title = "移除 @" + acc.ScreenName
+		}
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Text(c, title).FontSize(18).Bold()
+			ui.Text(c, "將自系統憑證庫刪除此帳號的憑證並自清單除名，無法復原。")
+			ui.Row(c).Gap(10).Justify(ui.End).AlignItems(ui.Center).Children(func() {
+				if ui.Button(c, "取消").Clicked() {
+					a.removeOpen = false
+				}
+				if ui.PrimaryButton(c, "確認移除").Clicked() {
+					a.removeConfirm()
+				}
+			})
 		})
 	})
 }
 
-// homeFeedView 繪製 feed 單欄：tabs、標題列（載入中含 spinner）、錯誤橫
-// 幅、活躍 feed 的時間線列表與到底提示。
-func (a *app) homeFeedView(c *ui.Context) {
+// homeFeedView 繪製 feed 單欄：band 0 的 tabs（band ≥1 由側欄承載）、
+// 標題列（載入中含 spinner；搜尋結果帶「返回時間線」顯式返回入口）、
+// 錯誤橫幅、活躍 feed 的時間線列表與到底提示。
+func (a *app) homeFeedView(c *ui.Context, band int) {
 	t := c.Theme()
 	// wasSearch 是進框前的檢視狀態：本框 Enter 剛開啟的搜尋不被同框的
 	// 殘餘 tab 輸入關閉（關閉只對「已在檢視」的搜尋生效）。
 	wasSearch := a.searchOpen
-	ui.Column(c).Fill().Children(func() {
-		// 頂列搜尋入口（Task 10）：MyGO 內建單行輸入（*string 綁定），
-		// Enter（Submitted）提交 submitSearch（空 query 由其忽略）。版
-		// 面暫置於 tabs 之上，Toolbar 收斂屬 Task 14。
-		in := ui.TextInput(c, &a.searchInput).Placeholder("搜尋貼文").Label("搜尋")
-		if in.Submitted() {
-			a.submitSearch(a.searchInput)
-		}
-		// tabs（MyGO 內建）：點選即改寫 a.activeFeed——建構返回前該框
-		// 輸入已套用，其後整框即以切換後的槽渲染（下方讀取 activeFeed
-		// 取得新選擇）。搜尋結果（feedSearch）不在 tabs：MyGO Tabs 會
-		// 把越界選擇鉗回範圍，故 activeFeed 恆為 tab 索引、搜尋以
-		// searchOpen 另行標示——其間點回任一 tab（Changed）即關閉。
-		tabs := ui.Tabs(c, &a.activeFeed, "For You", "Following")
-		if wasSearch && tabs.Changed() {
-			a.closeSearch() // 點回 For You/Following：ephemeral 槽歸零
+	root := ui.Column(c).Fill()
+	if band >= 3 {
+		// 寬內容區（D20）：卡片欄 max-width 640——上層容器（AlignItems
+		// Center）置中、兩側留白。
+		root = root.MaxWidth(640)
+	}
+	root.Children(func() {
+		if band == 0 {
+			// tabs（MyGO 內建；僅 band 0——band ≥1 由側欄承載）：點選
+			// 即改寫 a.activeFeed——建構返回前該框輸入已套用，其後整框
+			// 即以切換後的槽渲染（下方讀取 activeFeed 取得新選擇）。搜
+			// 尋結果（feedSearch）不在 tabs：MyGO Tabs 會把越界選擇鉗回
+			// 範圍，故 activeFeed 恆為 tab 索引、搜尋以 searchOpen 另行
+			// 標示——其間點回任一 tab（Changed）即關閉（已選 tab 的點
+			// 擊不觸發 Changed——顯式返回入口見標題列）。
+			tabs := ui.Tabs(c, &a.activeFeed, "For You", "Following")
+			if wasSearch && tabs.Changed() {
+				a.closeSearch() // 點回 For You/Following：ephemeral 槽歸零
+			}
 		}
 		kind := a.activeFeed
 		f := a.feeds[kind]
@@ -111,6 +353,12 @@ func (a *app) homeFeedView(c *ui.Context) {
 			title := "時間線"
 			if a.searchOpen {
 				title = "搜尋結果" // 搜尋指示：文字標示當前為搜尋結果（不新增第三 tab）
+				// 顯式返回入口（Task 10 UX 註記釘注）：已選 tab 的點擊
+				// 不觸發 Changed（mygo 只標記真切換），自預設 tab 開啟
+				// 的搜尋無 tab 返回路徑——「返回時間線」是顯式出口。
+				if ui.Button(c, searchBackText).Clicked() {
+					a.closeSearch() // ephemeral 槽歸零；同幀重建自行收斂
+				}
 			}
 			ui.Text(c, title).FontSize(20).Bold().Grow(1)
 			if f.busy {
@@ -150,11 +398,11 @@ func (a *app) homeFeedView(c *ui.Context) {
 				a.thumbRow(c, kind, f, p) // 縮圖格（僅含媒體貼文渲染；Task 12）
 			})
 			// 展開檢視入口（單一活躍播放器規則見 openDetail）與右欄並
-			// 列同一寬度閘：窗寬 <1024 時展開檢視不渲染（收合按鈕只在
-			// detailView），開帖將建出無收合路徑的活躍播放器（video 背
-			// 景載入／大圖下載）——窄窗列點擊不開帖（同 detailMinWidth
-			// 判定，見 homeView）。
-			if w, _ := c.Size(); w >= detailMinWidth && body.RowClicked() {
+			// 列同一寬度閘：窗寬 <bpLaptop（band <2）時展開檢視不渲染
+			//（收合按鈕只在 detailView），開帖將建出無收合路徑的活躍播
+			// 放器（video 背景載入／大圖下載）——窄帶列點擊不開帖（同
+			// homeView 的 band 閘判定）。
+			if w, _ := c.Size(); w >= bpLaptop && body.RowClicked() {
 				a.openDetail(p)
 			}
 		}).Grow(1)

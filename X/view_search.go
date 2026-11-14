@@ -16,6 +16,11 @@ import (
 // 的 product 為必填變數；搜尋結果頁用 "Top"）。
 const searchProduct = "Top"
 
+// searchBackText 是搜尋結果標題列的顯式返回入口文案（Task 14）：已選
+// tab 的點擊不觸發 Changed（mygo 只標記真切換），自預設 tab 開啟的搜尋
+// 無 tab 返回路徑——「返回時間線」是顯式出口（closeSearch）。
+const searchBackText = "返回時間線"
+
 // submitSearch 提交搜尋 query：空（含全空白）忽略不派發；搜尋進行中
 // （feedSearch 槽 busy）防抖忽略——沿 homeBusy 模式。起跑：feedSearch 槽
 // 歸零＝替換槽指標（Task 8 不變式：歸零一律換新槽、非原地清空——publish

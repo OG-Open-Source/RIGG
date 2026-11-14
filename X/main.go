@@ -18,6 +18,38 @@ import (
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/xerrors"
 )
 
+// 響應式斷點（DIP；Task 14／D20 佈局裁決）——layoutBand 的帶界。
+const (
+	bpTablet  = 768  // <768 單欄（Select 下拉）
+	bpLaptop  = 1024 // 768–1023 側欄兩欄；≥1024 完整版型＋detail 並列
+	bpDesktop = 1200 // ≥1200 寬內容區（卡片 max-width 640 置中）
+)
+
+// login view 變體（Task 14）：帳號選單的新增帳號／失效重登入口共用
+// login view，模式旗標分流（view 路由：sess 非 nil 且 mode 為 none 呈
+// home，其餘呈 login view 變體）。
+const (
+	loginModeNone    = 0 // 首次登入（原形）
+	loginModeAdd     = 1 // 新增帳號（home 的帳號選單進入）
+	loginModeRelogin = 2 // 失效帳號重登（重新貼上 Cookie）
+)
+
+// layoutBand 回窗寬對應的佈局帶 0..3（測試斷言用）：<768 單欄（0）、
+// 768–1023 側欄兩欄（1）、1024–1199 完整版型＋detail 並列（2）、≥1200
+// 寬內容區置中（3）。
+func (a *app) layoutBand(width float32) int {
+	switch {
+	case width < bpTablet:
+		return 0
+	case width < bpLaptop:
+		return 1
+	case width < bpDesktop:
+		return 2
+	default:
+		return 3
+	}
+}
+
 // app 是視窗呈現的應用狀態。所有欄位一律於 UI 執行緒讀寫：輸入處理器
 // 同步改動；背景結果經 publish（正式路徑 win.Update＝主執行緒套用＋重繪）
 // 回流——背景 goroutine 絕不直接改動本結構（MyGO 併發模型：goroutine 經
@@ -104,6 +136,28 @@ type app struct {
 	detail *post
 	player player
 	dmedia detailMedia
+
+	// —— 帳號選單（Task 14；D20 頂列佈局）——
+	// activeID 是活躍帳號 user_id 的記憶體快照（選單勾選、側欄選擇與
+	// 「移除活躍帳號 → 登出」的判定）：login 成功／switch 成功時設置、
+	// logout 清除、warmup 自索引 Current 同步。sideSel／selectAcc 是側
+	// 欄與窄帶下拉的選擇呈現（syncAccountSelection 同步；Sidebar／
+	// Select 的 id 語義見 view_home.go）。
+	activeID  string
+	sideSel   string
+	selectAcc string
+	// loginMode 是 login view 的變體（loginModeNone／Add／Relogin）；
+	// loginUserID 是重登目標（beginLoginVariant 設置、resetLoginForm
+	// 復位）。
+	loginMode   int
+	loginUserID string
+	// removeOpen／removeUserID 是「移除 @xxx」的確認 Modal（二次確認後
+	// removeConfirm 執行；Modal 開關即 *bool）。
+	removeOpen   bool
+	removeUserID string
+	// offResize 是視窗 OnResize 的解除函式（main 註冊處留存；視窗與
+	// app 同生命週期，無需解除）。
+	offResize func()
 }
 
 // newApp 建構 app：生命週期狀態先以無儲存層起手（main 於 store 建構成功
@@ -117,9 +171,62 @@ func newApp() *app {
 	}
 }
 
-// view 是視窗內容：已登入呈 home，否則 login（成功後自動切換，CUJ 1）。
+// accountByID 回帳號快照中指定 user_id 的帳號（帳號選單／側欄／重登入口
+// 的標籤與目標解析）。
+func (a *app) accountByID(userID string) (Account, bool) {
+	for _, acc := range a.accounts {
+		if acc.UserID == userID {
+			return acc, true
+		}
+	}
+	return Account{}, false
+}
+
+// syncAccountSelection 使側欄選擇（sideSel）與窄帶下拉（selectAcc）呈現
+// 活躍帳號（切換成功／失敗回滾／登出／warmup 後的呈現同步）；無活躍帳
+// 號（或不在快照）時復位。呈現欄位僅此同（UI 執行緒）寫入。
+func (a *app) syncAccountSelection() {
+	if acc, ok := a.accountByID(a.activeID); ok {
+		a.sideSel = acc.UserID
+		a.selectAcc = "@" + acc.ScreenName
+		return
+	}
+	a.sideSel = ""
+	a.selectAcc = ""
+}
+
+// upsertAccount 以記憶體快照同步單一帳號（落盤由呼叫端完成）：同 UserID
+// 覆蓋，否則依新增序追加（與索引 Order 同形）。login／新增帳號成功後的
+// 快照維護（選單即刻可見，免重跑 warmup）。
+func (a *app) upsertAccount(acc Account) {
+	for i := range a.accounts {
+		if a.accounts[i].UserID == acc.UserID {
+			a.accounts[i] = acc
+			return
+		}
+	}
+	a.accounts = append(a.accounts, acc)
+}
+
+// beginLoginVariant 進入 login view 變體（新增帳號／失效重登）：預設模
+// 式與目標、清輸入與錯誤；回 home 走 loginView 的「返回」入口。
+func (a *app) beginLoginVariant(mode int, userID string) {
+	a.loginMode = mode
+	a.loginUserID = userID
+	a.cookieInput = ""
+	a.loginErr = nil
+}
+
+// resetLoginForm 復位 login 表單（變體返回或完成後）：回到首次登入形、
+// 清輸入與錯誤。
+func (a *app) resetLoginForm() {
+	a.beginLoginVariant(loginModeNone, "")
+}
+
+// view 是視窗內容：已登入且非 login 變體（新增帳號／失效重登，Task 14）
+// 呈 home，否則 login（變體由 loginView 分流；成功後自動切換，CUJ 1）。
 func (a *app) view(c *ui.Context) {
-	if a.sess != nil {
+	if a.sess != nil && a.loginMode == loginModeNone {
 		a.homeView(c)
 		return
 	}
@@ -327,6 +434,7 @@ func (a *app) runSwitch(ctx context.Context, userID string, snap switchSnapshot)
 				a.accInvalid[userID] = true
 				a.switchErr = verr
 				a.switchBusy = false
+				a.syncAccountSelection() // 選擇呈現回歸活躍帳號（原會話不動）
 			})
 			return
 		}
@@ -350,6 +458,11 @@ func (a *app) runSwitch(ctx context.Context, userID string, snap switchSnapshot)
 		a.gen++
 		a.switchErr = nil
 		a.switchBusy = false
+		a.activeID = userID // 活躍快照（帳號選單勾選／側欄選擇／移除判定）
+		if _, ok := a.accountByID(userID); !ok {
+			a.upsertAccount(target) // 快照缺目標（未經 warmup 等）即補——選單即刻可見
+		}
+		a.syncAccountSelection()
 		// 步驟 8：feeds 歸零（墓碑；三槽全數——posts/cursor/seen/list/
 		// busy/err/end 皆隨新槽歸零）並落回 For You，自動載入其首頁
 		// （CUJ：切換後呈現新帳號的 For You）。搜尋為 ephemeral：槽已
@@ -381,13 +494,69 @@ func (a *app) rollbackIndex(ctx context.Context, prev string) {
 	}
 }
 
-// failSwitch 收斂切換失敗：錯誤呈現（switchErr，帳號選單 Task 8 接線）、
-// 防再入閘門復位。原會話不動（快照未被替換）、secret 保留（序列全程無
-// 刪除途徑）。
+// failSwitch 收斂切換失敗：錯誤呈現（switchErr，帳號選單錯誤區 Task 14
+// 接線）、防再入閘門復位、選擇呈現回歸活躍帳號。原會話不動（快照未被替
+// 換）、secret 保留（序列全程無刪除途徑）。
 func (a *app) failSwitch(err error) {
 	a.publish(func() {
 		a.switchErr = err
 		a.switchBusy = false
+		a.syncAccountSelection()
+	})
+}
+
+// updateAccount 是重登後的快照同步（UI 執行緒）：覆蓋同 UserID 項並清除
+// 失效標記——新 cookie 待 switchTo 的 Validate 重驗，再失敗即再標記（收
+// 斂不變式：標記只反映最近一次驗證結果）。
+func (a *app) updateAccount(acc Account) {
+	a.upsertAccount(acc)
+	delete(a.accInvalid, acc.UserID)
+}
+
+// logout 登出至 login view（D20 帳號選單：移除活躍帳號）：斬斷會話子樹
+//（在途 feed 工作收斂）、關閉會話（transport）、歸零 home 狀態——detail
+//（含播放器，§8.6）、搜尋（ephemeral）、三槽（墓碑替換）；a.sess=nil 使
+// view 路由回 login（首次登入形）。活躍帳號快照與選擇呈現一併復位。
+func (a *app) logout() {
+	if a.sessCancel != nil {
+		a.sessCancel()
+	}
+	a.closeDetail()
+	a.closeSearch()
+	a.feeds = [3]*timelineState{{}, {}, {}}
+	a.activeFeed = feedForYou
+	a.switchErr = nil
+	a.gen++ // 在途 feed 回寫以世代檢查丟棄（D18 同形）
+	a.activeID = ""
+	a.syncAccountSelection()
+	if sess := a.sess; sess != nil {
+		a.sess = nil
+		a.auth = nil
+		a.activeStore = nil
+		a.goAsync(func(ctx context.Context) { _ = sess.Close() }) // transport 收斂（best-effort）
+	}
+}
+
+// removeConfirm 執行帳號移除（Modal 二次確認後）：deleteAccount（背景；
+// 帳號鍵刪除＋索引除名由其完成，冪等）→ publish 記憶體快照除名；被移除
+// 者為活躍帳號 → logout（登出至 login view）。錯誤記 AppState.Err（同
+// persistLogin 語義：首錄不覆蓋、絕不清除其他帳號憑證）。
+func (a *app) removeConfirm() {
+	uid := a.removeUserID
+	a.removeOpen = false
+	a.removeUserID = ""
+	a.goAsync(func(ctx context.Context) {
+		err := deleteAccount(ctx, uid)
+		a.publish(func() {
+			if err != nil {
+				a.state.setErr(err)
+				return
+			}
+			a.accounts = slices.DeleteFunc(a.accounts, func(acc Account) bool { return acc.UserID == uid })
+			if a.activeID == uid {
+				a.logout() // 活躍帳號被移除：登出至 login view
+			}
+		})
 	})
 }
 
@@ -401,10 +570,16 @@ func (a *app) warmup() {
 	if err := migrateLegacyStore(ctx, a.proxy); err != nil {
 		a.state.setErr(err)
 	}
-	accs, _, err := loadAccounts(ctx)
+	accs, idx, err := loadAccounts(ctx)
 	a.publish(func() {
 		if err == nil {
 			a.accounts = accs
+			// 帳號選單（Task 14）：活躍快照自索引 Current 同步（切換進
+			// 行中不覆寫——以序列結果為準）；側欄／窄帶下拉呈現隨之同步。
+			if !a.switchBusy {
+				a.activeID = idx.Current
+				a.syncAccountSelection()
+			}
 		}
 	})
 	if err != nil {
@@ -484,6 +659,9 @@ func main() {
 			Content: ui.View(a.view),
 		})
 		a.apply = win.Update // 背景結果自此經主執行緒套用＋重繪
+		// OnResize → Invalidate：跨帶縮放即重繪（Task 14/D20 佈局；main
+		// 建構處註冊一次；off 函式留存——視窗與 app 同生命週期，無需解除）。
+		a.offResize = win.OnResize(func() { win.Invalidate() })
 		// spawn 不綁定（nil → goAsync 的正式路徑 state.Go；goSession 的
 		// 正式路徑為會話子樹派發）——綁定權留給測試注入。
 		a.startToken()

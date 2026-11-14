@@ -11,8 +11,9 @@
 // 引擎六 kind（app 層語義，Alternative 11 退路）——失敗呈 msgMedia＋外開
 // WorkURL 連結。
 //
-// 宿主形態：≥1024 右欄並列（homeView 分流）；<1024 的 Router 頁形態屬
-// Task 14 佈局接線（detailView 建構函式為其重用面）。
+// 宿主形態：band ≥2（≥1024）右欄並列（homeView 分流）；band <2 的窄帶
+// 沿 feed 單欄（展開狀態即幀收合，Task 14 佈局接線；detailView 建構函
+// 式為其重用面）。
 package main
 
 import (
@@ -33,15 +34,14 @@ type player interface{ Close() }
 // t.Cleanup 還原）。
 var openPlayer = func(url string) (player, error) { return video.OpenURL(url) }
 
-// detailPanelWidth 是右欄並列形態的展開檢視欄寬（DIP；Task 14 的
-// layoutBand 佈線可再調）。
+// detailPanelWidth 是右欄並列形態的展開檢視欄寬（DIP；band ≥2 的右欄）。
 const detailPanelWidth = float32(380)
 
-// detailMinWidth 是展開檢視並列（右欄）形態的窗寬下限（DIP）：<1024 為
-// 窄窗——列點擊不開帖、殘留 detail 於窄幀即時收合（兩處同一閘，見
-// homeView 與 homeFeedView 列點擊）：<1024 不渲染展開檢視，收合按鈕
-//（只在 detailView）不存在，開帖或殘留將使活躍播放器無任何收合路徑。
-const detailMinWidth = float32(1024)
+// 展開檢視並列（右欄）形態的窗寬下限為 bpLaptop（=1024，Task 14 的佈局
+// 帶界，原 Task 13 的 detailMinWidth 常數已併入）：band <2 為窄帶——列
+// 點擊不開帖、殘留 detail 於窄帶幀即時收合（兩處同一閘，見 homeView 與
+// homeFeedView 列點擊）：band <2 不渲染展開檢視，收合按鈕（只在
+// detailView）不存在，開帖或殘留將使活躍播放器無任何收合路徑。
 
 // detailMediaHeight 是展開檢視媒體區的固定高（DIP）：圖以 Fit(Contain)
 // 貼合、播放器未 Ready 時的縮圖／佔位同框，版面不隨載入跳動。
@@ -135,11 +135,11 @@ func (a *app) fetchDetailImage(url string) {
 	})
 }
 
-// detailView 建構展開檢視（右欄形態本體；Task 14 將它掛進 <1024 的
-// Router 頁）：標題列（作者＋收合）、貼文文字、WorkURL 與媒體區（Kind
-// 分派見 detailMediaView）。顯示欄位經 Sanitize 後上屏（view 層契約）。
-// 收合點擊觸發的 closeDetail 歸零 player／dmedia：MyGO 對建構中處理的
-// 輸入於同幀重建（consumed → 下一 pass），呈現幀不殘留關閉後狀態。
+// detailView 建構展開檢視（band ≥2 右欄並列形態本體）：標題列（作者＋
+// 收合）、貼文文字、WorkURL 與媒體區（Kind 分派見 detailMediaView）。
+// 顯示欄位經 Sanitize 後上屏（view 層契約）。收合點擊觸發的 closeDetail
+// 歸零 player／dmedia：MyGO 對建構中處理的輸入於同幀重建（consumed →
+// 下一 pass），呈現幀不殘留關閉後狀態。
 func (a *app) detailView(c *ui.Context, p post) {
 	t := c.Theme()
 	ui.Column(c).Padding(12, 16).Gap(8).Children(func() {
