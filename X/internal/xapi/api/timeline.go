@@ -205,61 +205,15 @@ func postUser(m map[string]any) User {
 	}
 }
 
-// homeTimelineOp 是 HomeTimeline 與 HomeLatestTimeline 的共用實作：兩操作
-// 對 X 端雙形態同構（D16；HomeLatestTimeline 依 P0' 實證——DECISIONS
-// 〈v1.1 P0' 探測〉節：GET 20/20、POST(cursor+seen) 20/20、零失敗、空
-// features），組裝與解析路徑完全一致，僅註冊表操作名不同。變數雙形態
-//（OQ3 裁決、DECISIONS D1、REQ-GQL-005）：
-//
-//   - 共同：count（數字）、includePromotedContent=true、withCommunity=true。
-//   - cursor 非空 → 加 cursor 變數。
-//   - seenTweetIDs 空 → 依註冊表方法（query 型 → GET）且無 seenTweetIds；
-//     此時 cursor 亦為空 → 加 requestContext="launch"（首頁啟動）。
-//   - seenTweetIDs 非空 → 覆寫為 POST，seenTweetIds（字串陣列，以
-//     CompactJSON 序列化）置於變數末。
-//
-// 解析：游標取 ExtractCursor(data, "Bottom")（無 → 空字串，呼叫端停止）；
-// 條目經 ExtractTweets 收集（promoted- 前綴已排除）後，result 含
+// parseTimelineResult 是時間線操作的共用解析尾段：Send 回傳的 data 解析為
+// TimelineResult——游標取 ExtractCursor(data, "Bottom")（無 → 空字串，呼叫
+// 端停止）；條目經 ExtractTweets 收集（promoted- 前綴已排除）後，result 含
 // promotedMetadata 者再排除，並以 work_id 去重、保留首見順序（REQ-WEB-104
 // 語義；跨頁去重由呼叫端以 seenTweetIDs 累積，設計 §25）；User 亦以 UserID
 // 去重（首見順序）。缺 rest_id 的條目視為結構不符，靜默跳過——時間線容忍
-// 個別壞條目。Operation 以複製覆寫 Method，不變動註冊表共用值（並行安全）。
-func (s *Sender) homeTimelineOp(opName string, cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
-	op, err := s.reg.Operation(opName)
-	if err != nil {
-		return nil, err
-	}
-	vars := graphql.OrderedParams{
-		{K: "count", V: strconv.Itoa(count)},
-		{K: "includePromotedContent", V: "true"},
-		{K: "withCommunity", V: "true"},
-	}
-	method := op.Method
-	if cursor != "" {
-		cv, err := graphql.CompactJSON(cursor)
-		if err != nil {
-			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("%s: cursor 序列化失敗: %v", opName, err)}
-		}
-		vars = append(vars, graphql.Param{K: "cursor", V: string(cv)})
-	}
-	if len(seenTweetIDs) == 0 {
-		if cursor == "" {
-			vars = append(vars, graphql.Param{K: "requestContext", V: `"launch"`})
-		}
-	} else {
-		sv, err := graphql.CompactJSON(seenTweetIDs)
-		if err != nil {
-			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("%s: seenTweetIds 序列化失敗: %v", opName, err)}
-		}
-		vars = append(vars, graphql.Param{K: "seenTweetIds", V: string(sv)})
-		method = "POST" // REQ-GQL-005：query 型操作顯式覆寫為 POST
-	}
-	opCall := *op
-	opCall.Method = method
-	data, err := s.Send(&opCall, vars, "")
-	if err != nil {
-		return nil, err
-	}
+// 個別壞條目。HomeTimeline／HomeLatestTimeline／SearchTimeline 共用：組裝
+// 形態各異（變數雙形態 vs 搜尋形），解析語義同一。
+func parseTimelineResult(opName string, data []byte) (*TimelineResult, error) {
 	var root any
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &root); err != nil {
@@ -300,6 +254,60 @@ func (s *Sender) homeTimelineOp(opName string, cursor string, count int, seenTwe
 	return res, nil
 }
 
+// homeTimelineOp 是 HomeTimeline 與 HomeLatestTimeline 的共用實作：兩操作
+// 對 X 端雙形態同構（D16；HomeLatestTimeline 依 P0' 實證——DECISIONS
+// 〈v1.1 P0' 探測〉節：GET 20/20、POST(cursor+seen) 20/20、零失敗、空
+// features），組裝與解析路徑完全一致，僅註冊表操作名不同。變數雙形態
+//（OQ3 裁決、DECISIONS D1、REQ-GQL-005）：
+//
+//   - 共同：count（數字）、includePromotedContent=true、withCommunity=true。
+//   - cursor 非空 → 加 cursor 變數。
+//   - seenTweetIDs 空 → 依註冊表方法（query 型 → GET）且無 seenTweetIds；
+//     此時 cursor 亦為空 → 加 requestContext="launch"（首頁啟動）。
+//   - seenTweetIDs 非空 → 覆寫為 POST，seenTweetIds（字串陣列，以
+//     CompactJSON 序列化）置於變數末。
+//
+// 解析共用 parseTimelineResult（游標、去促銷、去重語義見該函式註解）。
+// Operation 以複製覆寫 Method，不變動註冊表共用值（並行安全）。
+func (s *Sender) homeTimelineOp(opName string, cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
+	op, err := s.reg.Operation(opName)
+	if err != nil {
+		return nil, err
+	}
+	vars := graphql.OrderedParams{
+		{K: "count", V: strconv.Itoa(count)},
+		{K: "includePromotedContent", V: "true"},
+		{K: "withCommunity", V: "true"},
+	}
+	method := op.Method
+	if cursor != "" {
+		cv, err := graphql.CompactJSON(cursor)
+		if err != nil {
+			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("%s: cursor 序列化失敗: %v", opName, err)}
+		}
+		vars = append(vars, graphql.Param{K: "cursor", V: string(cv)})
+	}
+	if len(seenTweetIDs) == 0 {
+		if cursor == "" {
+			vars = append(vars, graphql.Param{K: "requestContext", V: `"launch"`})
+		}
+	} else {
+		sv, err := graphql.CompactJSON(seenTweetIDs)
+		if err != nil {
+			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("%s: seenTweetIds 序列化失敗: %v", opName, err)}
+		}
+		vars = append(vars, graphql.Param{K: "seenTweetIds", V: string(sv)})
+		method = "POST" // REQ-GQL-005：query 型操作顯式覆寫為 POST
+	}
+	opCall := *op
+	opCall.Method = method
+	data, err := s.Send(&opCall, vars, "")
+	if err != nil {
+		return nil, err
+	}
+	return parseTimelineResult(opName, data)
+}
+
 // HomeTimeline 讀取首頁時間線（REQ-RD-001..004）並解析為 TimelineResult
 //（變數雙形態與解析語義見 homeTimelineOp——共用實作）。
 func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
@@ -313,6 +321,51 @@ func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (
 //（seen 置變數末，沿 HomeTimeline 的既有排序）。
 func (s *Sender) HomeLatestTimeline(cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
 	return s.homeTimelineOp("HomeLatestTimeline", cursor, count, seenTweetIDs)
+}
+
+// SearchTimeline 恆 POST（REQ-RD-005/REQ-GQL-005 語義——P0' 實證 20/20：
+// product=Top 10/10、product=Latest 10/10、零失敗、空 features）。
+// variables 鍵序（P0' 實證形）：product→rawQuery→count；cursor 非空時附於
+// 其後（同 HomeTimeline 的 cursor 追加位置）。無 seenTweetIds。
+// product 值："Top"（預設）｜"Latest"——呼叫端（Task 10）決定。
+func (s *Sender) SearchTimeline(query, product, cursor string, count int) (*TimelineResult, error) {
+	if product == "" {
+		// P0' 實證：variables 缺 product → 422 GRAPHQL_VALIDATION_FAILED
+		// "must be defined: variable product"（DECISIONS〈v1.1 P0' 探測〉節）
+		// ——必填變數於送出前拒絕，不發請求。
+		return nil, &xerrors.InvalidInputError{Msg: "SearchTimeline: product 為必填變數，不可為空字串（\"Top\"／\"Latest\"）"}
+	}
+	op, err := s.reg.Operation("SearchTimeline")
+	if err != nil {
+		return nil, err
+	}
+	pv, err := graphql.CompactJSON(product)
+	if err != nil {
+		return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("SearchTimeline: product 序列化失敗: %v", err)}
+	}
+	rv, err := graphql.CompactJSON(query)
+	if err != nil {
+		return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("SearchTimeline: rawQuery 序列化失敗: %v", err)}
+	}
+	vars := graphql.OrderedParams{
+		{K: "product", V: string(pv)},
+		{K: "rawQuery", V: string(rv)},
+		{K: "count", V: strconv.Itoa(count)},
+	}
+	if cursor != "" {
+		cv, err := graphql.CompactJSON(cursor)
+		if err != nil {
+			return nil, &xerrors.InvalidInputError{Msg: fmt.Sprintf("SearchTimeline: cursor 序列化失敗: %v", err)}
+		}
+		vars = append(vars, graphql.Param{K: "cursor", V: string(cv)})
+	}
+	opCall := *op
+	opCall.Method = "POST" // REQ-GQL-005／REQ-RD-014：query 型恆 POST，複製覆寫不改註冊表
+	data, err := s.Send(&opCall, vars, "")
+	if err != nil {
+		return nil, err
+	}
+	return parseTimelineResult("SearchTimeline", data)
 }
 
 // Viewer 讀取當前會話身分（REQ-RD 表 get_viewer）：op Viewer、variables

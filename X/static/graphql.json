@@ -4,7 +4,8 @@
   "operations": [
     {"operationName": "Viewer", "operationType": "query", "queryId": "TpQxQtWMTMnIAMPlMGMqNw", "featureSwitches": [], "fieldToggles": []},
     {"operationName": "HomeTimeline", "operationType": "query", "queryId": "KmJCeZ__ef1fNos7tKN_fg", "featureSwitches": [], "fieldToggles": []},
-    {"operationName": "HomeLatestTimeline", "operationType": "query", "queryId": "IVA5BUbeYPTrpYekQH7jiA", "featureSwitches": [], "fieldToggles": []}
+    {"operationName": "HomeLatestTimeline", "operationType": "query", "queryId": "IVA5BUbeYPTrpYekQH7jiA", "featureSwitches": [], "fieldToggles": []},
+    {"operationName": "SearchTimeline", "operationType": "query", "queryId": "vLHjqbDv7TPFMBkIIO1nOA", "featureSwitches": [], "fieldToggles": []}
   ],
   "featureDefaults": {}
 }

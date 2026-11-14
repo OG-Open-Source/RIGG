@@ -31,14 +31,16 @@ import (
 )
 
 // timelineRegistryJSON 是本檔的合成註冊表 fixture（測試專用，非 X 原文）：
-// Viewer／HomeTimeline／HomeLatestTimeline 皆為 query 型、無
-// features／fieldToggles 宣告（HomeLatestTimeline 沿 D16：雙形態同構
-// HomeTimeline、空 features——DECISIONS〈v1.1 P0' 探測〉節）。
+// Viewer／HomeTimeline／HomeLatestTimeline／SearchTimeline 皆為 query 型、
+// 無 features／fieldToggles 宣告（HomeLatestTimeline 沿 D16：雙形態同構
+// HomeTimeline、空 features；SearchTimeline 沿 P0'：恆 POST、空
+// features——DECISIONS〈v1.1 P0' 探測〉節）。
 const timelineRegistryJSON = `{"generatedAt":"2026-11-12T00:00:00+08:00","frontendSha":null,
  "operations":[
   {"operationName":"Viewer","operationType":"query","queryId":"VIEWERID","featureSwitches":[],"fieldToggles":[]},
   {"operationName":"HomeTimeline","operationType":"query","queryId":"HOMEID","featureSwitches":[],"fieldToggles":[]},
-  {"operationName":"HomeLatestTimeline","operationType":"query","queryId":"HOMELATESTID","featureSwitches":[],"fieldToggles":[]}],
+  {"operationName":"HomeLatestTimeline","operationType":"query","queryId":"HOMELATESTID","featureSwitches":[],"fieldToggles":[]},
+  {"operationName":"SearchTimeline","operationType":"query","queryId":"SEARCHID","featureSwitches":[],"fieldToggles":[]}],
  "featureDefaults":{}}`
 
 // loadTimelineRegistry 將合成註冊表寫入暫存檔並載入（走真檔案路徑）。
@@ -829,5 +831,181 @@ func TestHomeLatestTimeline_ExtractsCursorAndPosts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(res, resHome) {
 		t.Errorf("HomeLatestTimeline 與 HomeTimeline 對同一資料的解析結果應同構：got %+v, want %+v", res, resHome)
+	}
+}
+
+// TestSearchTimeline_AlwaysPOST：wire 恆為 POST（REQ-RD-014；P0' 實證 20/20
+// 零失敗——DECISIONS〈v1.1 P0' 探測〉節）。SearchTimeline 屬 query 型，註冊
+// 表推導方法為 GET，須顯式覆寫（REQ-GQL-005）；body 頂層鍵序沿 REQ-GQL-003
+// variables→features→fieldToggles→queryId（無 features／fieldToggles 宣告時
+// 中間兩鍵整鍵省略，REQ-GQL-024）；variables 鍵序為 P0' 實證形
+// product→rawQuery→count（product 在首；無 includePromotedContent／
+// withCommunity／seenTweetIds／requestContext）；rawQuery 以 CompactJSON 前
+// 序列化上線（probe11 教訓：V 必為預序列化 JSON）；註冊表共用的
+// Operation.Method 不得被原地改寫。
+func TestSearchTimeline_AlwaysPOST(t *testing.T) {
+	fx := newTimelineFixture(t, tlRespond(t, tlData()))
+	res, err := fx.sender.SearchTimeline("mygo", "Top", "", 10)
+	if err != nil {
+		t.Fatalf("SearchTimeline error = %v, 期望 nil", err)
+	}
+	if res == nil {
+		t.Fatal("SearchTimeline 不應回 nil result")
+	}
+
+	reqs := fx.captured()
+	if len(reqs) != 1 {
+		t.Fatalf("捕捉伺服器應收到 1 個請求，得到 %d", len(reqs))
+	}
+	req := reqs[0]
+	if !strings.HasPrefix(req.requestLine(), "POST /i/api/graphql/SEARCHID/SearchTimeline") {
+		t.Fatalf("SearchTimeline 應恆以 POST 送出（REQ-RD-014），請求行：%s", req.requestLine())
+	}
+	topKeys := jsonKeyOrder(t, req.body)
+	if want := []string{"variables", "queryId"}; !reflect.DeepEqual(topKeys, want) {
+		t.Errorf("body 頂層鍵序 = %v, 期望 %v（REQ-GQL-003：variables→features→fieldToggles→queryId，無宣告時省略）", topKeys, want)
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(req.body, &parsed); err != nil {
+		t.Fatalf("body 解析失敗：%v（body=%q）", err, req.body)
+	}
+	varKeys := jsonKeyOrder(t, parsed["variables"])
+	want := []string{"product", "rawQuery", "count"}
+	if !reflect.DeepEqual(varKeys, want) {
+		t.Errorf("variables 鍵序 = %v, 期望 %v（P0' 實證形：product 在首）", varKeys, want)
+	}
+	var vars map[string]json.RawMessage
+	if err := json.Unmarshal(parsed["variables"], &vars); err != nil {
+		t.Fatalf("variables 解析失敗：%v", err)
+	}
+	if string(vars["product"]) != `"Top"` {
+		t.Errorf("product = %s, 期望 \"Top\"（預序列化 JSON 字串）", vars["product"])
+	}
+	if string(vars["rawQuery"]) != `"mygo"` {
+		t.Errorf("rawQuery = %s, 期望 \"mygo\"（CompactJSON 前序列化）", vars["rawQuery"])
+	}
+	if string(vars["count"]) != "10" {
+		t.Errorf("count = %s, 期望 10（數字上線）", vars["count"])
+	}
+
+	op, err := fx.reg.Operation("SearchTimeline")
+	if err != nil {
+		t.Fatalf("Operation(SearchTimeline) error = %v, 期望 nil", err)
+	}
+	if op.Method != "GET" {
+		t.Errorf("註冊表共用的 Operation.Method 不得被覆寫（query 型推導 GET），得到 %q", op.Method)
+	}
+}
+
+// TestSearchTimeline_ProductLatest：product="Latest" → variables.product 為
+// "Latest"（P0' 實證 product=Latest 10/10；product 值由呼叫端決定——Task 10）。
+func TestSearchTimeline_ProductLatest(t *testing.T) {
+	fx := newTimelineFixture(t, tlRespond(t, tlData()))
+	if _, err := fx.sender.SearchTimeline("mygo", "Latest", "", 10); err != nil {
+		t.Fatalf("SearchTimeline error = %v, 期望 nil", err)
+	}
+
+	reqs := fx.captured()
+	if len(reqs) != 1 {
+		t.Fatalf("捕捉伺服器應收到 1 個請求，得到 %d", len(reqs))
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(reqs[0].body, &parsed); err != nil {
+		t.Fatalf("body 解析失敗：%v（body=%q）", err, reqs[0].body)
+	}
+	var vars map[string]json.RawMessage
+	if err := json.Unmarshal(parsed["variables"], &vars); err != nil {
+		t.Fatalf("variables 解析失敗：%v", err)
+	}
+	if string(vars["product"]) != `"Latest"` {
+		t.Errorf("product = %s, 期望 \"Latest\"", vars["product"])
+	}
+}
+
+// TestSearchTimeline_ExtractsPosts：合成回應（含 promoted- 前綴條目、
+// result 帶 promotedMetadata 的 tweet- 條目、Bottom 游標）→ 解析與
+// HomeTimeline 同構（去促銷、work_id 去重、首見順序——REQ-WEB-104／
+// REQ-RD-012/013 語義）；cursor 非空時附於變數末（product→rawQuery→count
+// 之後），回應游標正確回傳。
+func TestSearchTimeline_ExtractsPosts(t *testing.T) {
+	data := tlData([]map[string]any{
+		tlTweetEntry("tweet-1", "9001", "search-alpha"),
+		tlEntry("promoted-tweet-6", tlItem(map[string]any{
+			"rest_id":          "9006",
+			"legacy":           map[string]any{"full_text": "ad"},
+			"promotedMetadata": map[string]any{"advertiser": "x"},
+		})),
+		tlTweetEntry("tweet-1-again", "9001", "search-alpha"), // 同 work_id 重現 → 去重
+		tlEntry("tweet-2", tlItem(func() map[string]any {
+			r := tlResult("9002", "search-beta")
+			r["promotedMetadata"] = map[string]any{"advertiser": "y"} // result 含 promotedMetadata → 排除
+			return r
+		}())),
+		tlEntry("cursor-bottom-0", map[string]any{"cursorType": "Bottom", "value": "SEARCHCUR"}),
+	})
+	fx := newTimelineFixture(t, tlRespond(t, data))
+	res, err := fx.sender.SearchTimeline("mygo", "Top", "PREVCUR", 10)
+	if err != nil {
+		t.Fatalf("SearchTimeline error = %v, 期望 nil", err)
+	}
+	wantPosts := []Post{
+		{WorkID: "9001", WorkURL: "https://x.com/user_9001/status/9001", ScreenName: "user_9001", Title: "search-alpha"},
+	}
+	if !reflect.DeepEqual(res.Posts, wantPosts) {
+		t.Errorf("Posts = %+v, 期望 %+v（去促銷、work_id 去重、首見順序）", res.Posts, wantPosts)
+	}
+	wantUsers := []User{
+		{UserID: "u-9001", ScreenName: "user_9001", Name: "User 9001"},
+	}
+	if !reflect.DeepEqual(res.Users, wantUsers) {
+		t.Errorf("Users = %+v, 期望 %+v", res.Users, wantUsers)
+	}
+	if res.Cursor != "SEARCHCUR" {
+		t.Errorf("Cursor = %q, 期望 \"SEARCHCUR\"（ExtractCursor(data, \"Bottom\")）", res.Cursor)
+	}
+
+	reqs := fx.captured()
+	if len(reqs) != 1 {
+		t.Fatalf("捕捉伺服器應收到 1 個請求，得到 %d", len(reqs))
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(reqs[0].body, &parsed); err != nil {
+		t.Fatalf("body 解析失敗：%v（body=%q）", err, reqs[0].body)
+	}
+	varKeys := jsonKeyOrder(t, parsed["variables"])
+	want := []string{"product", "rawQuery", "count", "cursor"}
+	if !reflect.DeepEqual(varKeys, want) {
+		t.Errorf("variables 鍵序 = %v, 期望 %v（cursor 非空時附於 count 之後）", varKeys, want)
+	}
+	var vars map[string]json.RawMessage
+	if err := json.Unmarshal(parsed["variables"], &vars); err != nil {
+		t.Fatalf("variables 解析失敗：%v", err)
+	}
+	if string(vars["cursor"]) != `"PREVCUR"` {
+		t.Errorf("cursor = %s, 期望 \"PREVCUR\"（CompactJSON 前序列化，沿 HomeTimeline）", vars["cursor"])
+	}
+}
+
+// TestSearchTimeline_EmptyProductIsInputError：product 空字串 →
+// *xerrors.InvalidInputError（P0' 實證 product 為必填變數——缺 product →
+// 422 GRAPHQL_VALIDATION_FAILED），且不發請求（捕捉伺服器零請求）。
+func TestSearchTimeline_EmptyProductIsInputError(t *testing.T) {
+	fx := newTimelineFixture(t, tlRespond(t, tlData()))
+	res, err := fx.sender.SearchTimeline("mygo", "", "", 10)
+	if err == nil {
+		t.Fatal("product 空字串應回錯誤，得到 nil")
+	}
+	if res != nil {
+		t.Errorf("錯誤路徑不應回 result，得到 %+v", res)
+	}
+	var iie *xerrors.InvalidInputError
+	if !errors.As(err, &iie) {
+		t.Fatalf("錯誤應可 errors.As 為 *xerrors.InvalidInputError，得到 %T：%v", err, err)
+	}
+	if iie.Kind() != xerrors.KindInput {
+		t.Errorf("InvalidInputError.Kind() = %s, 期望 %s", iie.Kind(), xerrors.KindInput)
+	}
+	if reqs := fx.captured(); len(reqs) != 0 {
+		t.Errorf("空 product 應於送出前拒絕，捕捉伺服器應零請求，得到 %d", len(reqs))
 	}
 }
