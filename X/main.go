@@ -78,14 +78,23 @@ type app struct {
 	// creds 是憑證有效性 TTL 快取（verifyTTL 內切換免重驗，§8.5）。
 	creds *credCache
 
-	// —— home 畫面狀態（Task 8：feeds 三槽）——
+	// —— home 畫面狀態（Task 8：feeds 三槽；Task 10：搜尋）——
 	// feeds 是固定三槽的時間線狀態（非 map）：For You／Following／
-	// search 預留（feedSearch 本任務建立、保留為空，Task 10 填充）。各
-	// 槽完全隔離——posts／cursor／seen／end／busy／err／list 各自累積，
-	// 切換 tab 不互相污染；seen 上限 seenCap（Review Focus 4）。
-	// activeFeed 是活躍槽索引（ui.Tabs 的 *int 裸 int）。
+	// search（feedSearch 由 Task 10 的搜尋結果使用——ephemeral，見
+	// view_search.go）。各槽完全隔離——posts／cursor／seen／end／busy／
+	// err／list 各自累積，切換 tab 不互相污染；seen 上限 seenCap
+	// （Review Focus 4）。activeFeed 是活躍 tab 索引（ui.Tabs 的 *int
+	// 裸 int；MyGO Tabs 會把越界選擇鉗回範圍，feedSearch 不寫入此欄）。
 	feeds      [3]*timelineState
 	activeFeed int
+	// searchInput 是頂列搜尋框的輸入緩衝（ui.TextInput *string 綁定；
+	// 提交值以 submitSearch 的 TrimSpace 為準，空 query 忽略）。
+	// searchOpen 標示當前檢視搜尋結果槽（feedSearch）——點回任一 tab
+	// 即關閉。searchQuery 是最後成功提交的 query（錯誤重試＝原 query
+	// 再提交；不做搜尋歷史，Non-Goals）。
+	searchInput string
+	searchOpen  bool
+	searchQuery string
 }
 
 // newApp 建構 app：生命週期狀態先以無儲存層起手（main 於 store 建構成功
@@ -334,9 +343,11 @@ func (a *app) runSwitch(ctx context.Context, userID string, snap switchSnapshot)
 		a.switchBusy = false
 		// 步驟 8：feeds 歸零（墓碑；三槽全數——posts/cursor/seen/list/
 		// busy/err/end 皆隨新槽歸零）並落回 For You，自動載入其首頁
-		// （CUJ：切換後呈現新帳號的 For You）。
+		// （CUJ：切換後呈現新帳號的 For You）。搜尋為 ephemeral：槽已
+		// 換新，檢視一併離開（searchOpen 復位）。
 		a.feeds = [3]*timelineState{{}, {}, {}}
 		a.activeFeed = feedForYou
+		a.searchOpen = false
 		a.loadFeed(feedForYou) // 自動載入 For You 首頁
 	})
 }

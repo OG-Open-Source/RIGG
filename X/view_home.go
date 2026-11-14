@@ -1,7 +1,8 @@
 // view_home：home 畫面——For You／Following 兩個時間線（ui.Tabs 切換，
-// feeds 三槽隔離：切換只換渲染的槽，狀態互不污染；feedSearch 預留槽本
-// 任務建立但保留為空，Task 10 填充）、捲動近底觸發翻頁（逐 feed）、到
-// 底提示、錯誤橫幅（不清列表，REQ-LOG-042/043：任何錯誤絕不清憑證，也
+// feeds 三槽隔離：切換只換渲染的槽，狀態互不污染；feedSearch 槽由 Task
+// 10 的搜尋結果使用——ephemeral，行為面見 view_search.go）、頂列搜尋入
+// 口（Enter 提交；點回任一 tab 關閉搜尋）、捲動近底觸發翻頁（逐 feed）、
+// 到底提示、錯誤橫幅（不清列表，REQ-LOG-042/043：任何錯誤絕不清憑證，也
 // 不清已載內容）。翻頁觸發（契約 3/4）：feed 未載入，或其列表於上一框
 // 已顯示到底（ui.List 的 AtEnd 語義涵蓋「捲動近底」與「內容不足一屏」）；
 // Cursor 空字串（或與前一頁相同）→ 到底提示、不再觸發。去重與 seen 累
@@ -44,19 +45,43 @@ const homeEndText = "已載入全部貼文"
 // 活躍 feed 的時間線列表與到底提示。
 func (a *app) homeView(c *ui.Context) {
 	t := c.Theme()
+	// wasSearch 是進框前的檢視狀態：本框 Enter 剛開啟的搜尋不被同框的
+	// 殘餘 tab 輸入關閉（關閉只對「已在檢視」的搜尋生效）。
+	wasSearch := a.searchOpen
 	ui.Column(c).Fill().Children(func() {
+		// 頂列搜尋入口（Task 10）：MyGO 內建單行輸入（*string 綁定），
+		// Enter（Submitted）提交 submitSearch（空 query 由其忽略）。版
+		// 面暫置於 tabs 之上，Toolbar 收斂屬 Task 14。
+		in := ui.TextInput(c, &a.searchInput).Placeholder("搜尋貼文").Label("搜尋")
+		if in.Submitted() {
+			a.submitSearch(a.searchInput)
+		}
 		// tabs（MyGO 內建）：點選即改寫 a.activeFeed——建構返回前該框
 		// 輸入已套用，其後整框即以切換後的槽渲染（下方讀取 activeFeed
-		// 取得新選擇）。feedSearch 預留槽不在 tabs（Task 10 接線）。
-		ui.Tabs(c, &a.activeFeed, "For You", "Following")
-		f := a.feeds[a.activeFeed]
+		// 取得新選擇）。搜尋結果（feedSearch）不在 tabs：MyGO Tabs 會
+		// 把越界選擇鉗回範圍，故 activeFeed 恆為 tab 索引、搜尋以
+		// searchOpen 另行標示——其間點回任一 tab（Changed）即關閉。
+		tabs := ui.Tabs(c, &a.activeFeed, "For You", "Following")
+		if wasSearch && tabs.Changed() {
+			a.closeSearch() // 點回 For You/Following：ephemeral 槽歸零
+		}
+		kind := a.activeFeed
+		f := a.feeds[kind]
+		if a.searchOpen {
+			kind, f = feedSearch, a.feeds[feedSearch] // 搜尋結果走 feed 渲染路徑
+		}
 		// 翻頁觸發：先於列表建構檢查（AtEnd 反映上一框的版面；首載以
-		// posts 為空表達）。loadFeed 自帶防抖與終止條件（busy／end／err）。
+		// posts 為空表達）。loadFeed 自帶防抖與終止條件（busy／end／
+		// err）；feedSearch 非其管轄（大聲預設不派發，載入走 submitSearch）。
 		if len(f.posts) == 0 || f.list.AtEnd() {
-			a.loadFeed(a.activeFeed)
+			a.loadFeed(kind)
 		}
 		ui.Row(c).Padding(12, 16).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "時間線").FontSize(20).Bold().Grow(1)
+			title := "時間線"
+			if a.searchOpen {
+				title = "搜尋結果" // 搜尋指示：文字標示當前為搜尋結果（不新增第三 tab）
+			}
+			ui.Text(c, title).FontSize(20).Bold().Grow(1)
 			if f.busy {
 				ui.Spinner(c)
 			}
@@ -68,7 +93,11 @@ func (a *app) homeView(c *ui.Context) {
 				ui.Text(c, Sanitize(errorText(f.err))).TextColor(t.Danger).Grow(1)
 				if ui.Button(c, "重試").Clicked() {
 					f.err = nil
-					a.loadFeed(a.activeFeed)
+					if a.searchOpen {
+						a.submitSearch(a.searchQuery) // 搜尋重試＝最後 query 再提交
+					} else {
+						a.loadFeed(a.activeFeed)
+					}
 				}
 			})
 		}
@@ -97,8 +126,9 @@ func (a *app) homeView(c *ui.Context) {
 // loadFeed 載入 feed kind 的下一頁（或首頁）：防抖與終止閘門（busy／已
 // 到底／有未處置錯誤／無會話）→ 背景呼叫接縫——For You 走 Home（契約
 // 3：HomeTimeline(cursor, 20, seen)）、Following 走 HomeLatest（Task 7：
-// HomeLatestTimeline，雙形態同構；cursor／seen 各自累積）→ 經 publish 回
-// UI 執行緒套用。背景工作以會話子樹派發（goSession，§8.4），起跑前捕捉
+// HomeLatestTimeline，雙形態同構；cursor／seen 各自累積；feedSearch 非
+// 本派發管轄——大聲預設不派發，Task 10 搜尋走 submitSearch）→ 經 publish
+// 回 UI 執行緒套用。背景工作以會話子樹派發（goSession，§8.4），起跑前捕捉
 // 世代（gen）與槽，回寫前比對——世代過期（帳號切換墓碑已歸零）或槽已被
 // 換新的舊結果整批丟棄，不得污染新畫面（D18 世代邊界雙保險：cancel 斬
 // 在途、gen 防已回程；Review Focus 1）。逐 feed 化（Task 8）：寫回一律指
@@ -107,6 +137,16 @@ func (a *app) homeView(c *ui.Context) {
 func (a *app) loadFeed(kind int) {
 	f := a.feeds[kind]
 	if f.busy || f.end || f.err != nil || a.sess == nil {
+		return
+	}
+	// 大聲預設（Task 8 review 釘注）：本派發僅管轄 For You／Following
+	// 兩槽——未知 kind（含 feedSearch：其載入走 submitSearch，Task 10）
+	// 一律不派發、快速失敗。須在佔用 busy 之前攔下：誤入的呼叫不得把
+	// 槽卡在 busy（AtEnd 逐框重入即永久佔住）；亦不寫 err（橫幅將成
+	// 逐框風暴）。
+	switch kind {
+	case feedForYou, feedFollowing:
+	default:
 		return
 	}
 	f.busy = true

@@ -79,6 +79,10 @@ type xSession interface {
 	// HomeLatestTimeline；與 HomeTimeline 同構，D16——P0' 實證）：count
 	// 固定 homePageSize；seen 同 Home。
 	HomeLatest(cursor string, seen []string) (*timelineResult, error)
+	// Search 讀取一頁搜尋結果（Task 9 的引擎操作 SearchTimeline；Task 9
+	// 裁決：恆 POST、product 為必填變數——由呼叫端傳入，搜尋結果頁用
+	// "Top"；無 seenTweetIds）。count 固定 homePageSize（同 Home）。
+	Search(query, product, cursor string) (*timelineResult, error)
 	// Close 釋放會話資源（transport 收斂；冪等）：switchTo 步驟 6 於舊
 	// 會話替換前呼叫（設計 §8.4——簡報 §1.3 實測根因）。
 	Close() error
@@ -178,4 +182,10 @@ func (s *engineSession) Home(cursor string, seen []string) (*timelineResult, err
 // HomeLatest 實作 xSession（Task 7 的 HomeLatestTimeline 引擎操作）。
 func (s *engineSession) HomeLatest(cursor string, seen []string) (*timelineResult, error) {
 	return s.sender.HomeLatestTimeline(cursor, homePageSize, seen)
+}
+
+// Search 實作 xSession（Task 9 的 SearchTimeline 引擎操作；product 必
+// 填——Task 9 裁決，由呼叫端傳入，搜尋結果頁用 "Top"）。
+func (s *engineSession) Search(query, product, cursor string) (*timelineResult, error) {
+	return s.sender.SearchTimeline(query, product, cursor, homePageSize)
 }

@@ -25,13 +25,17 @@ import (
 // home 依注入腳本回應（nil 腳本＝成功／空頁）。userID 攜帶身分供切換
 // 斷言（switch_test.go）；Close 為介面擴充後的 stub（呼叫計入日誌）。
 type fakeSession struct {
-	mu         sync.Mutex
-	calls      []string
-	lastSeen   []string
-	userID     string
-	validate   func(cookie string) (viewerInfo, error)
-	home       func(cursor string, seen []string) (*timelineResult, error)
-	homeLatest func(cursor string, seen []string) (*timelineResult, error)
+	mu          sync.Mutex
+	calls       []string
+	lastSeen    []string
+	userID      string
+	validate    func(cookie string) (viewerInfo, error)
+	home        func(cursor string, seen []string) (*timelineResult, error)
+	homeLatest  func(cursor string, seen []string) (*timelineResult, error)
+	search      func(query, product, cursor string) (*timelineResult, error) // Task 10：搜尋腳本（nil＝成功／空頁）
+	lastQuery   string                                                       // 最後一次 Search 收到的參數（product=="Top" 等契約斷言用）
+	lastProduct string
+	lastCursor  string
 }
 
 func (f *fakeSession) Validate(cookie string) (viewerInfo, error) {
@@ -66,6 +70,19 @@ func (f *fakeSession) HomeLatest(cursor string, seen []string) (*timelineResult,
 		return &timelineResult{}, nil
 	}
 	return f.homeLatest(cursor, seen)
+}
+
+// Search 記錄呼叫並依注入腳本回應（Task 10：搜尋接縫，nil 腳本＝成功／
+// 空頁）；收到參數留存供 product=="Top" 等契約斷言。
+func (f *fakeSession) Search(query, product, cursor string) (*timelineResult, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, "Search")
+	f.lastQuery, f.lastProduct, f.lastCursor = query, product, cursor
+	f.mu.Unlock()
+	if f.search == nil {
+		return &timelineResult{}, nil
+	}
+	return f.search(query, product, cursor)
 }
 
 func (f *fakeSession) Close() error {
