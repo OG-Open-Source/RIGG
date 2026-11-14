@@ -2,7 +2,7 @@
 // sender，提供三個子命令供 Task 2 執行探測、Task 7/9 引用結論——
 //
 //   - latest：HomeTimeline 雙形態各送一次（GET 啟動形態＋POST seen 形態），
-//     輸出 JSON 摘要（請求數／status／ok／data 佈林，headers 全數脫敏）。
+//     輸出 JSON 摘要（請求數／ok／data 佈林，headers 全數脫敏）。
 //   - searchid：自檔案或 stdin 讀 chunk JS，輸出 queryId 對照 JSON
 //     （純函式、無網路、不需 cookie；真實抓取由 Task 2 以 shell 配合）。
 //   - media：以 Sender.Send 取得 HomeTimeline 的原始 data JSON，輸出其中
@@ -43,15 +43,14 @@ const maskValue = "***"
 // HomeTimeline("", 20, …)）。
 const probePageSize = 20
 
-// probeReq 是單次請求的摘要條目：status 取不到時為 0（Sender 不暴露
-// HTTP status——brief：在摘要記 ok/err 即可，不擴引擎介面）；data 為
-// 「回應 data 非空」佈林（latest 臂以解析結果含貼文計）。
+// probeReq 是單次請求的摘要條目：Sender 不暴露 HTTP status（brief：在
+// 摘要記 ok/err 即可，不擴引擎介面）；data 為「回應 data 非空」佈林
+// （latest 臂以解析結果含貼文計）。
 type probeReq struct {
-	Name   string `json:"name"`
-	Status int    `json:"status,omitempty"`
-	OK     bool   `json:"ok"`
-	Data   bool   `json:"data"`
-	Err    string `json:"err,omitempty"`
+	Name string `json:"name"`
+	OK   bool   `json:"ok"`
+	Data bool   `json:"data"`
+	Err  string `json:"err,omitempty"`
 }
 
 // extractQueryIDs 以 regex 掃描 chunk JS 中操作名與 queryId 的鄰接對
@@ -74,9 +73,9 @@ func extractQueryIDs(js string) map[string]string {
 	return ids
 }
 
-// summarize 將請求數、各請求的 status/ok/data 佈林與請求標頭組成 JSON
-// 摘要字串：headers 值全數以固定遮罩取代（REQ-INV-01：輸出絕不含 cookie
-// 值；遮罩不保留長度）；Err 欄位輸出前先經 scrub 遮除 cookie 行與其各值
+// summarize 將請求數、各請求的 ok/data 佈林與請求標頭組成 JSON 摘要字
+// 串：headers 值全數以固定遮罩取代（REQ-INV-01：輸出絕不含 cookie 值；
+// 遮罩不保留長度）；Err 欄位輸出前先經 scrub 遮除 cookie 行與其各值
 // ——與 stderr 同一套輸出端結構性保險，不依賴引擎錯誤字串的內容。輸出
 // 以兩格縮排、不轉義 HTML 字元。
 func summarize(headers map[string]string, cookieLine string, reqs []probeReq) string {
@@ -428,7 +427,7 @@ func usage() {
   latest             HomeTimeline 雙形態各送一次（GET 啟動形態＋POST seen 形態），輸出脫敏 JSON 摘要
   searchid [檔案|-]  自檔案或 stdin 讀 chunk JS，輸出 queryId 對照 JSON（無網路、不需 cookie）
   media              送一次 HomeTimeline，輸出回應中的媒體 CDN URL 清單 JSON
-  search <qid> <query> [count]
+  search <qid> <query> [product] [count]
                      以記憶體 Operation 送 SearchTimeline（恆 POST、空
                      features），輸出脫敏 JSON 摘要（Task 2 儀器）
 
