@@ -114,12 +114,43 @@ func (a *app) homeView(c *ui.Context) {
 				if p.WorkURL != "" {
 					ui.Link(c, "開啟貼文", Sanitize(p.WorkURL))
 				}
+				a.thumbRow(c, kind, f, p) // 縮圖格（僅含媒體貼文渲染；Task 12）
 			})
 		}).Grow(1)
 		// 到底提示：游標空（或與前頁相同）後顯示，且不再觸發翻頁。
 		if f.end {
 			ui.Text(c, homeEndText).TextColor(t.TextMuted).Padding(12, 16)
 		}
+	})
+}
+
+// thumbRow 渲染貼文的縮圖格（Task 12）：僅貼文含 Media 時渲染（其餘貼
+// 文與今日完全同形），列表縮圖取首個媒體項（設計 §8.2）。thumbStore 命
+// 中即 ui.Image；未命中 → 佔位（主題色塊＋「載入中」）並經 ensureThumb
+// 派發（in-flight 去重＋信號量，見 media.go）；失敗 → 「可重試」按鈕，
+// 點擊才再派發（不自動重試）。
+func (a *app) thumbRow(c *ui.Context, kind int, f *timelineState, p post) {
+	if len(p.Media) == 0 {
+		return
+	}
+	m := p.Media[0]
+	if m.ThumbURL == "" {
+		return
+	}
+	if src, ok := thumbLRU.get(m.ThumbURL); ok {
+		ui.Image(c, src).Size(160, 90) // 給定尺寸即縮放至貼合（MyGO Image 語義）
+		return
+	}
+	if thumbFailed[m.ThumbURL] {
+		if ui.Button(c, thumbRetryText).Clicked() {
+			a.retryThumb(kind, f, m.ThumbURL) // 顯式重試：清除失敗態再派發
+		}
+		return
+	}
+	a.ensureThumb(kind, f, m.ThumbURL) // 未命中：派發（冪等；逐框重入去重）
+	t := c.Theme()
+	ui.Column(c).Background(t.Surface).Size(160, 90).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, thumbLoadingText).TextColor(t.TextMuted)
 	})
 }
 
