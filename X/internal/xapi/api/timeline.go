@@ -19,12 +19,15 @@ const maxWalkDepth = 10000
 
 // Post 是時間線輸出的單一貼文：WorkID 取自 result.rest_id；WorkURL 為
 // "https://x.com/" + ScreenName + "/status/" + WorkID（REQ-DAT-014 語義的
-// 識別三元組）；Title 依 REQ-DAT-014（postTitle）。
+// 識別三元組）；Title 依 REQ-DAT-014（postTitle）；Media 為
+// extended_entities.media 萃取（REQ-DAT-015/016，見 media.go——無媒體時
+// 為 nil）。
 type Post struct {
 	WorkID     string
 	WorkURL    string
 	ScreenName string
 	Title      string
+	Media      []MediaItem
 }
 
 // User 是貼文作者的公開身分（自 core.user_results.result 萃取）。
@@ -245,6 +248,7 @@ func parseTimelineResult(opName string, data []byte) (*TimelineResult, error) {
 			WorkURL:    "https://x.com/" + user.ScreenName + "/status/" + workID,
 			ScreenName: user.ScreenName,
 			Title:      postTitle(result),
+			Media:      extractMedia(result), // extended_entities.media（REQ-DAT-015/016，見 media.go）
 		})
 		if user.UserID != "" && !seenUser[user.UserID] {
 			seenUser[user.UserID] = true
