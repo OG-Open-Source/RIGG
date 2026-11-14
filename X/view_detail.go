@@ -1,7 +1,7 @@
 // view_detail：展開檢視＋影片播放生命週期（v1.1 設計 §8.6；Task 13）。
 //
 // 單一活躍播放器：開新帖前先 Close 舊的（openDetail）；離開展開檢視
-//（收合按鈕／切換帳號墓碑）經 closeDetail 釋放。列表虛擬化對列表縮圖
+// （收合按鈕／切換帳號墓碑）經 closeDetail 釋放。列表虛擬化對列表縮圖
 // 天然停播（ui.Video 的「view 建構才前進」語義），但展開頁的關閉語義
 // 是顯式 Close——播放器不隨檢視消失自動釋放。
 //
@@ -112,7 +112,7 @@ func (a *app) closePlayer() {
 // 回主執行緒比對後解碼（ui.DecodeImage 於主執行緒——Bitmap 建構的執行
 // 執行緒約束未經查證，主執行緒是安全面，同 finishThumb）並寫 dmedia.img；
 // 下載或解碼失敗記 imgFail（呈失敗 UX，不自動重試）。切換帳號的墓碑
-//（closeDetail 歸零 detail）與換帖（detail 指標更替）使過期結果整批丟棄。
+// （closeDetail 歸零 detail）與換帖（detail 指標更替）使過期結果整批丟棄。
 func (a *app) fetchDetailImage(url string) {
 	d, gen := a.detail, a.gen
 	a.goSession(func(ctx context.Context) {
@@ -160,7 +160,7 @@ func (a *app) detailView(c *ui.Context, p post) {
 }
 
 // detailMediaView 是展開檢視的媒體區（Kind 分派，§8.6）：photo → 大圖
-//（ui.Image；未載入 → 佔位、失敗 → msgMedia＋外開）；video/gif →
+// （ui.Image；未載入 → 佔位、失敗 → msgMedia＋外開）；video/gif →
 // ui.Video（openPlayer 失敗 → 失敗 UX；Ready 前呈媒體縮圖——thumbLRU
 // 命中即縮圖、未命中佔位，不派發縮圖下載：展開頁的載入對象是大圖／播
 // 放器，縮圖管線屬列表框，見 media.go）。

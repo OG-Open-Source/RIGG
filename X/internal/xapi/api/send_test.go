@@ -45,7 +45,7 @@ func startProxyRelay(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("代理監聽失敗：%v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -60,7 +60,7 @@ func startProxyRelay(t *testing.T) string {
 
 // relayTunnel 處理單一 CONNECT：讀完請求頭、撥接目標、雙向中繼。
 func relayTunnel(client net.Conn) {
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	_ = client.SetDeadline(time.Now().Add(30 * time.Second))
 	br := bufio.NewReader(client)
 	reqLine, err := br.ReadString('\n')
@@ -82,7 +82,7 @@ func relayTunnel(client net.Conn) {
 		_, _ = client.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	_ = upstream.SetDeadline(time.Now().Add(30 * time.Second))
 	_, _ = client.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
 	done := make(chan struct{}, 2)
@@ -225,7 +225,7 @@ func newCaptureServer(t *testing.T, respond func(seq int, head, body []byte) []b
 	if err != nil {
 		t.Fatalf("捕捉伺服器監聽失敗：%v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	var mu sync.Mutex
 	var reqs []capturedRequest
 	go func() {
@@ -238,7 +238,7 @@ func newCaptureServer(t *testing.T, respond func(seq int, head, body []byte) []b
 			seq++
 			n := seq
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(30 * time.Second))
 				br := bufio.NewReader(c)
 				var head bytes.Buffer
@@ -414,7 +414,7 @@ func TestSend_QueryGET_REQ_RD_001(t *testing.T) {
 		t.Errorf("query string 應以 variables= 起始（REQ-GQL-001），得到：%s", q)
 	}
 	iVar, iFeat, iTog := strings.Index(q, "variables="), strings.Index(q, "features="), strings.Index(q, "fieldToggles=")
-	if iVar < 0 || iFeat < 0 || iTog < 0 || !(iVar < iFeat && iFeat < iTog) {
+	if iVar < 0 || iFeat < 0 || iTog < 0 || iVar >= iFeat || iFeat >= iTog {
 		t.Errorf("query 鍵序應為 variables→features→fieldToggles（REQ-GQL-001），得到：%s", q)
 	}
 	if got := req.headerValue("content-type"); got != "application/json" {
@@ -730,7 +730,7 @@ func TestSend_RefererDefault_REQ_RD_002(t *testing.T) {
 func TestSend_MalformedQueryID_REQ_GQL_014(t *testing.T) {
 	fx := newSendFixture(t, nil, nil)
 	badReg := loadRegistryFromJSON(t, malformedRegistryJSON)
-	fx.reg = badReg            // 白盒注入：與 Sender 共用同一份損毀註冊表
+	fx.reg = badReg // 白盒注入：與 Sender 共用同一份損毀註冊表
 	fx.sender.reg = badReg
 	op, err := badReg.Operation("TestMutation")
 	if err != nil {
@@ -860,12 +860,12 @@ func TestSend_WireHeaderOrder_REQ_HDR_003(t *testing.T) {
 			t.Fatalf("%s 線上缺標頭 %s", method, name)
 			return -1
 		}
-		if !(idx("content-type") < idx("authorization") &&
-			idx("authorization") < idx("x-twitter-auth-type") &&
-			idx("x-twitter-auth-type") < idx("x-csrf-token") &&
-			idx("x-csrf-token") < idx("x-twitter-active-user") &&
-			idx("x-twitter-active-user") < idx("origin") &&
-			idx("origin") < idx("referer")) {
+		if idx("content-type") >= idx("authorization") ||
+			idx("authorization") >= idx("x-twitter-auth-type") ||
+			idx("x-twitter-auth-type") >= idx("x-csrf-token") ||
+			idx("x-csrf-token") >= idx("x-twitter-active-user") ||
+			idx("x-twitter-active-user") >= idx("origin") ||
+			idx("origin") >= idx("referer") {
 			t.Errorf("%s GraphQL 族序不符 REQ-HDR-003：%v", method, names)
 		}
 	}

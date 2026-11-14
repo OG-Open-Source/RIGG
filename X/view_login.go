@@ -86,7 +86,7 @@ func (a *app) loginView(c *ui.Context) {
 // ＋persistLogin 落盤（REQ-WEB-070 同鍵覆蓋＋索引追加）後沿 switchTo 路
 // 徑原地切換——切換序列的世代邊界（gen++）與三槽墓碑不可省，不走首次
 // 登入的直接替換。失效重登（loginModeRelogin）：驗證身分須為目標帳號
-//（REQ-WEB-069 身分與憑證綁定），通過即以新 cookie 行覆蓋同鍵、清除失效
+// （REQ-WEB-069 身分與憑證綁定），通過即以新 cookie 行覆蓋同鍵、清除失效
 // 標記，再沿 switchTo 原地重試切換（序列的 Validate 對新值重驗——TTL 外
 // 必然重驗；再失敗即再標失效，收斂同 switchTo）。模式與重登目標於派發時
 // 捕捉（UI 執行緒）：背景只用捕捉值，不讀共享欄位（app 併發模型）。

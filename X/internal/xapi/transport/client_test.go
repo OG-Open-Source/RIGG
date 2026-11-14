@@ -33,7 +33,7 @@ func startProxyRelay(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("代理監聽失敗：%v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -48,7 +48,7 @@ func startProxyRelay(t *testing.T) string {
 
 // relayTunnel 處理單一 CONNECT：讀完請求頭、撥接目標、雙向中繼。
 func relayTunnel(client net.Conn) {
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	_ = client.SetDeadline(time.Now().Add(30 * time.Second))
 	br := bufio.NewReader(client)
 	reqLine, err := br.ReadString('\n')
@@ -70,7 +70,7 @@ func relayTunnel(client net.Conn) {
 		_, _ = client.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	_ = upstream.SetDeadline(time.Now().Add(30 * time.Second))
 	_, _ = client.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
 	done := make(chan struct{}, 2)
@@ -88,7 +88,7 @@ func startCaptureServer(t *testing.T) (baseURL string, captured func() [][]byte)
 	if err != nil {
 		t.Fatalf("捕捉伺服器監聽失敗：%v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	var mu sync.Mutex
 	var heads [][]byte
 	go func() {
@@ -98,7 +98,7 @@ func startCaptureServer(t *testing.T) (baseURL string, captured func() [][]byte)
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(15 * time.Second))
 				br := bufio.NewReader(c)
 				var head bytes.Buffer
@@ -196,7 +196,7 @@ func TestNew_AllowDirectEscapeHatch_OQ12(t *testing.T) {
 	if err != nil {
 		t.Fatalf("直連請求應成功：%v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("直連應回 200，得到 %d", resp.StatusCode)
 	}
@@ -371,7 +371,7 @@ func TestNoRedirect_REQ_TRN_040(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do 失敗：%v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusFound {
 		t.Errorf("應回傳 302 回應本身，得到 %d", resp.StatusCode)
 	}
@@ -416,7 +416,7 @@ func TestHeaderOrderPreserved_REQ_HDR_002_013(t *testing.T) {
 	if idx("x-custom-b") < 0 || idx("accept") < 0 || idx("x-custom-a") < 0 {
 		t.Fatalf("Header-Order 值應含三個自訂標頭，得到 %v", declared)
 	}
-	if !(idx("x-custom-b") < idx("accept") && idx("accept") < idx("x-custom-a")) {
+	if idx("x-custom-b") >= idx("accept") || idx("accept") >= idx("x-custom-a") {
 		t.Errorf("Header-Order 相對順序錯誤，得到 %v", declared)
 	}
 	for _, n := range declared {
@@ -447,7 +447,7 @@ func TestHeaderOrderPreserved_REQ_HDR_002_013(t *testing.T) {
 			t.Fatalf("wire 未以原樣大小寫寫出 %s；捕捉：%q", name, heads[0])
 		}
 	}
-	if !(pos["X-Custom-B:"] < pos["accept:"] && pos["accept:"] < pos["X-Custom-a:"]) {
+	if pos["X-Custom-B:"] >= pos["accept:"] || pos["accept:"] >= pos["X-Custom-a:"] {
 		t.Errorf("wire 順序應為 X-Custom-B → accept → X-Custom-a，得到位置 %v；捕捉：%q", pos, heads[0])
 	}
 	if !strings.Contains(string(heads[0]), "accept: application/json") {
@@ -545,7 +545,7 @@ func TestCookieOrderWithJarNeutralized(t *testing.T) {
 	if prioLine < 0 {
 		t.Fatalf("wire 應含 priority 標頭（transport 預設補齊）；捕捉：%q", wire2)
 	}
-	if !(cookieIdx >= 0 && cookieIdx < prioLine) {
+	if cookieIdx < 0 || cookieIdx >= prioLine {
 		t.Errorf("cookie 應在 priority 之前（Chrome 觀察序）；捕捉：%q", wire2)
 	}
 
@@ -562,7 +562,7 @@ func TestCookieOrderWithJarNeutralized(t *testing.T) {
 	if idx("cookie") < 0 || idx("priority") < 0 {
 		t.Fatalf("Header-Order 應含 cookie 與 priority，得到 %v", declared)
 	}
-	if !(idx("cookie") < idx("priority")) {
+	if idx("cookie") >= idx("priority") {
 		t.Errorf("Header-Order 中 cookie 應在 priority 之前，得到 %v", declared)
 	}
 }

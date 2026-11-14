@@ -262,7 +262,7 @@ func parseTimelineResult(opName string, data []byte) (*TimelineResult, error) {
 // 對 X 端雙形態同構（D16；HomeLatestTimeline 依 P0' 實證——DECISIONS
 // 〈v1.1 P0' 探測〉節：GET 20/20、POST(cursor+seen) 20/20、零失敗、空
 // features），組裝與解析路徑完全一致，僅註冊表操作名不同。變數雙形態
-//（OQ3 裁決、DECISIONS D1、REQ-GQL-005）：
+// （OQ3 裁決、DECISIONS D1、REQ-GQL-005）：
 //
 //   - 共同：count（數字）、includePromotedContent=true、withCommunity=true。
 //   - cursor 非空 → 加 cursor 變數。
@@ -273,7 +273,7 @@ func parseTimelineResult(opName string, data []byte) (*TimelineResult, error) {
 //
 // 解析共用 parseTimelineResult（游標、去促銷、去重語義見該函式註解）。
 // Operation 以複製覆寫 Method，不變動註冊表共用值（並行安全）。
-func (s *Sender) homeTimelineOp(opName string, cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
+func (s *Sender) homeTimelineOp(opName, cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
 	op, err := s.reg.Operation(opName)
 	if err != nil {
 		return nil, err
@@ -313,7 +313,7 @@ func (s *Sender) homeTimelineOp(opName string, cursor string, count int, seenTwe
 }
 
 // HomeTimeline 讀取首頁時間線（REQ-RD-001..004）並解析為 TimelineResult
-//（變數雙形態與解析語義見 homeTimelineOp——共用實作）。
+// （變數雙形態與解析語義見 homeTimelineOp——共用實作）。
 func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
 	return s.homeTimelineOp("HomeTimeline", cursor, count, seenTweetIDs)
 }
@@ -322,7 +322,7 @@ func (s *Sender) HomeTimeline(cursor string, count int, seenTweetIDs []string) (
 // 20/20、零失敗、空 features——DECISIONS〈v1.1 P0' 探測〉節；D16：雙形態
 // 同構 HomeTimeline）。形態分支與 HomeTimeline 完全一致：cursor=="" 且
 // seen 空 → GET 啟動形態；cursor 非空或 seen 非空 → POST 帶 seenTweetIds
-//（seen 置變數末，沿 HomeTimeline 的既有排序）。
+// （seen 置變數末，沿 HomeTimeline 的既有排序）。
 func (s *Sender) HomeLatestTimeline(cursor string, count int, seenTweetIDs []string) (*TimelineResult, error) {
 	return s.homeTimelineOp("HomeLatestTimeline", cursor, count, seenTweetIDs)
 }

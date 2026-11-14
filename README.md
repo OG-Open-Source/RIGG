@@ -28,7 +28,7 @@ Current and planned projects, one independent Go module per directory:
 
 | Project | Description | Status |
 | --- | --- | --- |
-| [`X/`](X/) | X (Twitter) web client engine in Go plus its MyGO desktop app, module `github.com/OG-Open-Source/RIGG/X` | v1 delivered, L2-accepted — cookie login, home timeline reading with cursor paging |
+| [`X/`](X/) | X (Twitter) web client engine in Go plus its MyGO desktop app, module `github.com/OG-Open-Source/RIGG/X` | v1.1 delivered — multi-account (up to 5), media thumbnails + expanded playback, For You + Following timelines, search, responsive top toolbar; engine v1 was L2-accepted |
 | `youtube/` | YouTube API client in Go | Planned |
 
 The hardest upstream algorithms are treated as pure computation and will be re-derived independently; the upstream repository under `vendor/XApis/` is a protocol reference only.
@@ -46,6 +46,16 @@ The first delivered project is the **X engine** ([`X/`](X/), Go module `github.c
 - **v1 scope**: cookie-import login plus home timeline reading with cursor paging. Writes, media, articles, direct messages, password login, and the web console are out of scope for v1.
 
 Live L2 acceptance: Viewer identity validation 3/3; HomeTimeline 28 posts on the first page; paged to the 10-page cap (298 cumulative posts, zero cross-page duplicates); rate-limit/flood codes 226/344 = 0. All spec interpretations and deviations are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md); the XCTID header is deferred per the P0 probe verdict and kept as an optional slot.
+
+**v1.1** extends the delivered v1 with, still on the pure-Go native UI:
+
+- **Multi-account (up to 5)**: paste-a-cookie account import with identity binding (one secret index plus one secret per account), account switching with Viewer re-validation behind a 10-minute validity cache, lazy credential warm-up at startup, and tombstoned timeline state on switch-away (state is discarded and reloaded on switch-back). Migration from the v1 single-cookie store is crash-safe (write-then-delete with dual-write during the transition).
+- **Media**: timeline thumbnails via an async, byte-budget LRU (24 MiB decoded-pixel budget, 8 MiB per-file download cap); a post detail view with the large image and an embedded single-active video player; GIFs play through their highest-bitrate mp4 variant. Media is fetched straight from the public CDN (no credentials — verified) through a lightweight dedicated client.
+- **Dual timelines**: For You and Following as isolated tabs, each with its own cursor, seen-set, and scroll state (generation-guarded against in-flight writes across account switches).
+- **Search**: top-toolbar search entry with product (Top/Latest) results; `SearchTimeline` is POST-only per spec and was probe-verified with an empty feature-switch snapshot.
+- **Responsive top toolbar**: account menu top-left, search top-right, no bottom bar; horizontal bands at the 768/1024/1200 breakpoints, pinned by `Tester.SetSize` tests.
+
+The web/Wasm build (`go tool mygo build -platform web`) is maintained as a **test vehicle only** and is compile-smoked on every commit; its data plane is not verified in the browser (CORS plus raw-TLS constraints) and a data-plane relay is deferred to v2. The three-scenario L2 RAM acceptance for v1.1 (peak < 80 MiB with media) is pending a controller-run measurement with real credentials; the v1 live baseline peaked at ~30 MiB.
 
 ### Attribution
 
@@ -159,7 +169,7 @@ Each project in this monorepo adopts [Semantic Versioning](https://semver.org/sp
 
 Every tag **MUST** match the pattern `[a-z0-9\.-]+`.
 
-Tags are created when a version actually ships with its features; the current `X` version is 0.1.0 (engine v1, L2-accepted) and is not yet tagged.
+Tags are created when a version actually ships with its features; the current `X` version is 0.2.0 (engine v1.1) and is not yet tagged.
 
 ### Issue Reporting
 

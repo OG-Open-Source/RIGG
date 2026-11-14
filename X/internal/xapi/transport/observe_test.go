@@ -54,7 +54,7 @@ func TestObserveHooks_REQ_INV_13(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do 失敗：%v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -100,7 +100,7 @@ func TestObserveHooks_PanicAbsorbed_REQ_INV_13(t *testing.T) {
 	if err != nil {
 		t.Fatalf("鉤子 panic 應被吸收，Do 不應失敗：%v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("鉤子 panic 後請求仍應成功，得到 status %d", resp.StatusCode)
 	}

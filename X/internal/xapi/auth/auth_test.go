@@ -42,16 +42,26 @@ func TestPrepareAuth_Parse_REQ_AUTH_003(t *testing.T) {
 		in   string
 		want map[string]string
 	}{
-		{"basic_trailing_semicolon", "a=1; b=2;",
-			map[string]string{"a": "1", "b": "2", "ct0": "GEN", "lang": "zh-CN"}},
-		{"extra_whitespace", "  a=1 ;  b=2  ",
-			map[string]string{"a": "1", "b": "2", "ct0": "GEN", "lang": "zh-CN"}},
-		{"empty_segments", "a=1;;b=2",
-			map[string]string{"a": "1", "b": "2", "ct0": "GEN", "lang": "zh-CN"}},
-		{"value_contains_equals", "twid=u%3D123",
-			map[string]string{"twid": "u%3D123", "ct0": "GEN", "lang": "zh-CN"}},
-		{"first_equals_split", "k=a=b",
-			map[string]string{"k": "a=b", "ct0": "GEN", "lang": "zh-CN"}},
+		{
+			"basic_trailing_semicolon", "a=1; b=2;",
+			map[string]string{"a": "1", "b": "2", "ct0": "GEN", "lang": "zh-CN"},
+		},
+		{
+			"extra_whitespace", "  a=1 ;  b=2  ",
+			map[string]string{"a": "1", "b": "2", "ct0": "GEN", "lang": "zh-CN"},
+		},
+		{
+			"empty_segments", "a=1;;b=2",
+			map[string]string{"a": "1", "b": "2", "ct0": "GEN", "lang": "zh-CN"},
+		},
+		{
+			"value_contains_equals", "twid=u%3D123",
+			map[string]string{"twid": "u%3D123", "ct0": "GEN", "lang": "zh-CN"},
+		},
+		{
+			"first_equals_split", "k=a=b",
+			map[string]string{"k": "a=b", "ct0": "GEN", "lang": "zh-CN"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

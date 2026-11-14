@@ -1,14 +1,19 @@
 # 決策記錄（DECISIONS）
 
-> 本檔登錄「MyGO X 引擎 v1」對規格（`XAPIS_BEHAVIOR_SPEC.md`，唯一行為參考）的
-> 解讀與偏離，作為 `docs/designs/x-engine-v1.md` §3.8 所述「開工時回寫」的落點。
-> 本檔不改動凍結的規格本身；每筆裁決一節，含「依據」與「偏離登錄」欄。
-> 基準日：2026-11-11（Task 0，P0 前置裁決）。
+> 本檔登錄「MyGO X 引擎各輪」（v1、v1.1 及後續輪次）對規格
+> （`XAPIS_BEHAVIOR_SPEC.md`，唯一行為參考）的解讀與偏離，作為
+> `docs/designs/x-engine-v1.md` §3.8 所述「開工時回寫」的落點。
+> 本檔不改動凍結的規格本身；每筆裁決一節，含「依據」與「偏離登錄」欄，
+> 並標「適用版本」（v1 裁決由 v1.1 沿用者如實標註；規格 REQ 條目的輪次
+> 適用性另見〈規格 REQ×版本適用性對照表〉節）。
+> 基準日：2026-11-11（Task 0，P0 前置裁決）；v1.1 輪續編 D11–D22
+> （2026-11-14，Task 15 定稿入編）。
 
 ## 已定案裁決
 
 ### D1 OQ3：HomeTimeline 以 7.8.2 方法表為準
 
+*   **適用版本**：v1 定案；v1.1 沿用（D16 的 HomeLatestTimeline 同構套用）。
 *   **裁決**：HomeTimeline 以 7.8.2 方法表為準——無已讀 → `GET` ＋
     `requestContext=launch`；有已讀 → `POST` ＋ `seenTweetIds` 置 variables 末。
 *   **REQ-GQL-005 解讀**：「帶 seenTweetIds 的 query 型必須 POST」。
@@ -21,6 +26,7 @@
 
 ### D2 OQ5：七層套件樹
 
+*   **適用版本**：v1 定案；v1.1 沿用。
 *   **裁決**：七層套件樹
     `X/internal/xapi/{fingerprint,transport,auth,headers,graphql,xctid,api}` ＋
     `xerrors`。
@@ -31,6 +37,7 @@
 
 ### D3 TRN-011 偏離：傳輸層以 bogdanfinn/tls-client 承接
 
+*   **適用版本**：v1 定案；v1.1 沿用。
 *   **裁決**：curl_cffi 指名改以 `bogdanfinn/tls-client`（chrome_150 profile）
     承接，uTLS 單一 TLS 棧。
 *   **依據**：設計文件「提出的解法」（純 Go、零 cgo、符合 MyGO 單一執行檔
@@ -42,6 +49,7 @@
 
 ### D4 §2-6 錯誤字串偏離
 
+*   **適用版本**：v1 定案；v1.1 沿用。
 *   **裁決**：規格「錯誤字串逐字保留」、REQ-AUTH-004 精確文案、REQ-GQL-007
     訊息格式**不適用**；行為層僅保留錯誤分類（kind/code 機械可分，
     REQ-LOG-042/043 不變）。
@@ -53,6 +61,7 @@
 
 ### D5 12.2 錯誤文案存活清單
 
+*   **適用版本**：v1 定案；v1.1 沿用。
 *   **裁決**：保留 `proxy_timeout` / `login_timeout` / `proxy_configuration`；
     閘道專屬四條（`gateway_auth` / `gateway_busy` / `gateway_unavailable` /
     `gateway_error`）映射為直連語義新文案。
@@ -63,6 +72,7 @@
 
 ### D6 代理解析裁減
 
+*   **適用版本**：v1 定案；直連語義其後經 D10 修訂，v1.1 沿用修訂結果。
 *   **裁決**：`X_PROXY` → `HTTPS_PROXY`/`ALL_PROXY` → MyGO netproxy → 失敗
     關閉；移除 Windows 註冊表層與本機埠探測層（後者以安全理由）。
 *   **依據**：設計文件 §3.7（代理解析鏈）與 Open Questions OQ6（建議預設值
@@ -73,6 +83,7 @@
 
 ### D7 v1 不跟隨重定向
 
+*   **適用版本**：v1 定案；v1.1 沿用（完整語義仍隨 v2）。
 *   **裁決**：v1 不跟隨重定向（REQ-TRN-040 以嚴格超集滿足，完整語義隨 v2）。
 *   **依據**：設計文件 §3.2 transport 列（「重定向一律不跟隨」）與 §3.4 第 5
     步；G4（TRN-040 以「v1 一律不跟隨重定向」嚴格超集滿足）。實作前提
@@ -82,6 +93,7 @@
 
 ### D8 閘道移除
 
+*   **適用版本**：v1 定案；v1.1 沿用。
 *   **裁決**：第 10 章與 REQ-TRN-030..041 不適用。
 *   **依據**：設計文件 Alternative B 被否決的理由——閘道存在理由是隔離
     Python 的 TLS 限制；全 Go 後只剩程序間 RPC 的部署與除錯負擔。
@@ -90,6 +102,7 @@
 
 ### D9 transport 無 cookie jar；Cookie 標頭由呼叫端注入
 
+*   **適用版本**：v1 定案；v1.1 沿用（write-through 帳號化不改變本不變量）。
 *   **裁決**：transport 不持有任何 cookie 狀態——tls-client 的 jar 掛點以
     no-op cookie jar 中和；`Cookie` 標頭由呼叫端（Sender，自 XAuth 取值）
     於請求上注入。Header-Order 於 cookie 存在時恆涵蓋之，並錨定於
@@ -106,6 +119,232 @@
     僅排序」；transport 的 cookie 職責限於 Header-Order 涵蓋與錨定。
     代理格式非法（無 scheme/host 或不支援的 scheme）同於無代理，於
     `New` 即 fail-closed 拒絕（REQ-INV-02），不待送出、不得直連。
+
+### D10 代理改為可選：正常用途直連（需求方 2026-11-13 裁決）
+
+*   **適用版本**：v1 輪內修訂（2026-11-13）；v1.1 沿用。
+*   **裁決**：桌面 app（正常用途、自有帳號）不再要求代理——`ResolveProxy`
+    三層皆無時回 `("", nil)` 直連；transport 以 `Options.AllowDirect: true`
+    於 app 層顯式選入（引擎預設仍 fail-closed）。系統偵測命中但預檢失敗 →
+    視同未偵測到（落入直連）；使用者顯式配置（`X_PROXY` 等）仍原樣採用。
+*   **依據**：OQ12 探測實證（直連可達且被正常接受、0×226/344，見探測節）＋
+    需求方裁決「設計給正常用途，代理應該用不到」。REQ-INV-02 的
+    fail-closed 原契約針對多帳號控制台的強制每帳號代理部署；本桌面 app
+    單一自有帳號情境予以修訂。
+*   **偏離登錄**：REQ-INV-02 於本 app 之適用修訂為「代理可選、直連為基線、
+    顯式配置的代理仍被採用」。成本：直連暴露真實 IP 且無指紋代理保護——
+    若 X 日後對該出口 IP 形態收緊風控（226/344 上升），重新啟用代理即可
+    （transport 支援不變）。
+*   **配套**：註冊表快照經 mygo.json `resources` 出貨至執行檔旁（MyGO 會
+    攤平路徑：出貨為 exe 旁的 `graphql.json`；`registryPath()` 優先 exe
+    目錄、退回開發期的 `static/graphql.json`）——修正 L2 後首次實機
+    登入的兩個失敗根因（快照未出貨＋代理 fail-closed）。
+
+### D11 多帳號模型 A：索引 secret＋每帳號 secret（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：多帳號採模型 A——單一活躍會話；索引 secret `x-accounts`
+    （`{version, order[], current}`）＋每帳號 secret `x-account-<user_id>`
+    （Account JSON：中繼資料與 cookie 行同鍵原子寫）；`newSessionFor(acc)`
+    依帳號建構會話；`xSession` 補 `Close()`；`Validate` 改為
+    `Verify(cookieLine) (ViewerInfo, error)`（切換流需取回身分，login 流
+    同法複用）。Secrets 無 List API（實測）——索引 secret 是列舉帳號的
+    唯一路徑，「自建帳號清單遍歷」否決。v1 單鍵 `x-cookie-line` 遷移：
+    「先寫後刪」（crash-safe）、Viewer 失敗保留舊鍵、降級期雙寫舊鍵
+    （v1.1 期間回退不丟會話）。
+*   **依據**：需求方 2026-11-14 裁決＋Secrets 實測約束；v1.1 設計 §8.3
+    （儲存佈局與遷移序列）。實作落點：`X/accounts.go`、`X/migrate.go`
+    （遷移三態測試：新裝／升級／回退）。
+*   **偏離登錄**：REQ-WEB-069／070 為 web 控制台域條目（409 API 行為），
+    於本桌面 app 採用其**身分語義**：以身分綁定一致（UserID 定鍵，登入
+    身分與憑證一致）與重複綁定＝同鍵覆蓋（同 UserID 再匯入覆蓋並提示
+    「已更新」）承接入帳號模型；409 回應體本身不適用（無 web API 面）。
+
+### D12 切換即重驗 Viewer＋有效性 TTL 快取＋墓碑（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：切換時重驗 Viewer（方案甲）；重驗結果帶 TTL 快取
+    （10 分鐘，`verifyTTL`）——TTL 內切換免重驗、直接以快取身分重建
+    session；驗證失敗不切換、標記失效、原會話不動；舊 transport 於新
+    會話驗證成功後關閉。啟動時 lazy 預熱全部帳號憑證（僅 cookie 行與
+    中繼資料，不建 transport）；**切走即墓碑**——舊會話的時間線狀態
+    （posts/cursor/seen/list）一律丟棄，僅保留帳號中繼資料＋憑證＋有效性
+    紀錄，切回時重新載入時間線（重新 Home 首頁）。
+*   **依據**：需求方 2026-11-14 兩次裁決（方案甲＋墓碑機制）；v1.1 設計
+    §8.5。TTL 值 10 分鐘隨實作定案（`X/accounts.go` `verifyTTL`）；兼顧
+    切換速度與低常駐 RAM（D14 防線的帳號側配套）。
+*   **偏離登錄**：無（切換流屬 app 層自由度；REQ-WEB-069 身分語義經重驗
+    維持，失效呈現走 credential 錯誤文案＋「重新貼上 Cookie」入口，
+    不移除 key）。
+
+### D13 GIF 走 mp4 variant（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：GIF（`animated_gif`）與 video 走同一解析路徑——取
+    `content_type == "video/mp4"` 中位元率最高者為播放來源；HLS（m3u8）
+    不採用。
+*   **依據**：需求方 2026-11-14 裁決；P0' 探測實證（timeline 回應內
+    mp4 variant 全 200，見〈v1.1 P0' 探測結論〉媒體節）。實作落點：
+    `X/internal/xapi/api/media.go`（`bestMP4Variant`）。
+*   **偏離登錄**：REQ-DAT-016 的 mp4 位元率語義擴及 `animated_gif`
+    （規格未對 GIF 另立規則，屬同語義延伸）；m3u8 variant 不入選為本檔
+    裁決（規格未禁止，P0' 實證 HLS 非必要）。
+
+### D14 媒體 RAM 預算（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：解碼位元組 LRU 上限 24 MiB（`thumbLRUBytes`——量測後可調
+    的常數）＋行程峰值 <80 MiB 驗收線；`ReleasePixels` 為釋放槓桿；縮圖
+    取 `name=small`（medium 備用）；單一媒體檔下載上限 8 MiB
+    （`thumbMaxBytes`，超限即錯誤、不整讀入）。「快取上限＝80 MiB」的
+    字面執行否決（與行程峰值驗收線自相矛盾）。
+*   **依據**：需求方 2026-11-14 裁決（LRU 先量測再定案——接受）＋v1 L2
+    RAM 基線（閒置 11.3 MiB → 載入 26.0 MiB → 翻頁 10 頁峰值 30.0 MiB，
+    見〈L2 驗收記錄〉）＋zoom-out 紀律。實作落點：`X/media.go`
+    （`thumbStore` LRU、`fetchImage` 守門）。
+*   **偏離登錄**：無（RAM 預算屬本專案自設 NFR；80 MiB 驗收線為 v1.1
+    設計自設值，非規格條目）。
+*   **驗收狀態**：三場景 L2 RAM 量測（閒置／100 帖含媒體捲動／播放中，
+    行程峰值 <80 MiB）**待驗**——需真實憑證，由控制器另行執行後回寫
+    數值（見〈v1.1 收尾登錄〉節）。實作者端已驗事實：v1 L2 基線峰值
+    30 MiB 量級；v1.1 單元防線釘測全綠（LRU 逐出、單檔超限拒收）。
+
+### D15 媒體下載獨立出口（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：媒體（縮圖／影片）以獨立輕量 `net/http` 客戶端直載公開
+    CDN，不走引擎 transport；沿用代理解析結果（D10 直連語義）；單檔與
+    總量上限寫死；媒體 403/404 不落六型別錯誤語義，app 層以可重試佔位
+    呈現。
+*   **依據**：v1.1 設計 §1.7 權衡（design F7 主張的 transport 路徑否決
+    ——需為媒體開二進位下載面且媒體 403/404 不落六型別語義，成本高於
+    收益）；P0' 實抓收尾（見〈v1.1 P0' 探測結論〉媒體節）。實作落點：
+    `X/media.go`（`fetchImage` seam）。
+*   **偏離登錄**：REQ-TRN-010（所有 X 請求必須經單一客戶端出口）登錄為
+    偏離——單一出口指 X API（GraphQL）流量；媒體 CDN
+    （`pbs.twimg.com`／`video.twimg.com`）≠ GraphQL API，走獨立出口
+    （免認證實證見 D22）。
+
+### D16 HomeLatestTimeline 規格外登錄（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：`HomeLatestTimeline` 在凍結規格外，以 P0' 探測＋快照為
+    契約、隨 X 前端發版漂移：與 HomeTimeline 同構的雙形態（首頁 GET 無
+    seen；cursor/seen 非空 → POST 帶 seenTweetIds）＋空 featureSwitches。
+    P0' 實證：GET 20/20、POST（cursor+seen）20/20、零失敗，queryId
+    `IVA5BUbeYPTrpYekQH7jiA`（v1 探測節記錄值至今有效）。
+*   **依據**：需求方 2026-11-14 裁決（原開放問題 #5：執行 P0' 探測鏈，
+    空 features → features 回填 → 仍失敗才降級登錄——首臂即全過）；
+    探測結論回寫本檔〈v1.1 P0' 探測結論〉節。實作落點：
+    `X/internal/xapi/api/timeline.go`（與 HomeTimeline 共用
+    `homeTimelineOp`）。
+*   **偏離登錄**：本操作不在 `XAPIS_BEHAVIOR_SPEC.md` 凍結範圍——登錄為
+    「規格外操作，以探測＋快照為契約」；queryId 不得硬編碼為行為契約，
+    須按 Task 8 快照機制重取。
+
+### D17 格式化鏈（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：Go 格式化鏈定案：`cd X` → `gofumpt -w -extra .` →
+    `golangci-lint run`（v2 預設 linter：errcheck/govet/ineffassign/
+    staticcheck/unused）→ `go vet ./...`＋`go test -race -count=1 ./...`
+    全綠＋web 編譯冒煙，為每 commit 退出條件。oxfmt 自鏈中移除（不支援
+    Go——需求方 2026-11-14 裁決；若日後有 JS/TS 資產再單獨採用）。
+    執行位置約束（工具鏈實測）：gofumpt 限定 `X/` 執行；golangci-lint
+    v2.15.0 必須在 `X/` 內執行（repo 根無 go.mod → exit 1）；
+    `vendor/XApis/gateway/` 為獨立 Go module，不在範圍。
+*   **依據**：需求方 2026-11-14 裁決＋格式化工具鏈實測結論；Task 15
+    全鏈執行實錄（見〈v1.1 收尾登錄〉節）。
+*   **偏離登錄**：無（工程鏈屬本專案自由度；v1 僅 `go vet`＋
+    `go test -race`，v1.1 起升級為本鏈）。
+
+### D18 世代邊界（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：帳號切換／登出即 cancel 舊 context 子樹（在途 feed 工作
+    收斂）並遞增世代號；非同步回寫（publish）攜世代號——世代不符的
+    過期結果整批丟棄；時間線狀態 `timelineState` 按槽位×2（For You／
+    Following）隔離，搜尋結果為查詢時存在、關閉即棄的 ephemeral 狀態。
+*   **依據**：v1.1 設計 §1.1／§8.4（世代邊界）；實作落點 `X/session.go`
+    ＋`X/view_home.go`（世代＋槽指標雙檢查；in-flight 過期即棄釘測）。
+*   **偏離登錄**：無（app 層併發結構屬本專案自由度）。
+
+### D19 帳號數上限 5（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：帳號數上限 5（`maxAccounts = 5`）；新增第 6 個時呈提示態
+    （禁用＋上限文案），提示清理；目標用戶為非專業用戶（3–5 帳號即
+    足夠）。移除帳號＝刪 secret＋索引除名＋二次確認（Modal）。
+*   **依據**：需求方 2026-11-14 裁決（原開放問題 #2）。實作落點：
+    `X/accounts.go`（`maxAccounts`）＋頂列帳號選單提示態。
+*   **偏離登錄**：無（產品約束屬需求方裁量）。
+
+### D20 頂列佈局與斷點（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：主內容承載於頂列：左上帳號切換（選單）、右上搜尋；不做
+    下方 bar（Desktop only，行動端不考量）。水平響應式四帶：
+    band 0（<768，僅 Select 收合）、band 1（768–1023，兩欄）、
+    band 2（1024–1199，完整版型——側欄＋時間線＋展開檢視並列）、
+    band 3（≥1200，內容欄 640 置中）；斷點 768/1024/1200（需求方提供
+    階梯），`Tester.SetSize` 三寬度釘測。
+*   **依據**：需求方 2026-11-14 裁決（原開放問題 #1）；v1.1 設計 §9。
+    實作落點：`X/view_home.go`（`layoutBand`）＋`X/view_layout_test.go`
+    （斷點逐字釘測）。
+*   **偏離登錄**：無（UI 佈局屬 app 層自由度；MyGO 內建元件 Tabs/
+    Sidebar/Select/Modal/Route/MenuButton 於 v1.1 兌現）。
+
+### D21 搜尋入 v1.1（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：`SearchTimeline` 入 v1.1——頂列搜尋入口＋結果頁；queryId
+    併 P0' 探測萃取得 `vLHjqbDv7TPFMBkIIO1nOA`（登入態 shell chunk 萃取，
+    105 操作之一）。REQ-RD-014 的「不得改用 GET」恆 POST 適用；P0' 進一步
+    實證：variables **必須含 `product`**（缺 → 422
+    `GRAPHQL_VALIDATION_FAILED` "must be defined: variable product"），
+    形狀 `{product, rawQuery, count}`；product=Top/Latest 各 10/10 零失敗
+    （空 featureSwitches 可用）。結果 `timelineState` 為 ephemeral
+    （查詢時存在、關閉即棄）。
+*   **依據**：需求方 2026-11-14 裁決（#1 附帶範圍擴張）；〈v1.1 P0' 探測
+    結論〉SearchTimeline 節。實作落點：`X/internal/xapi/api/timeline.go`
+    （`SearchTimeline` Sender 方法）＋頂列搜尋接線。
+*   **偏離登錄**：REQ-RD-014 的 product 必填性為規格未記載的補充登錄
+    （422 實證）——契約以探測＋快照為準、隨前端輪動（同 D16 立場）。
+
+### D22 媒體 CDN 免認證定案（v1.1）
+
+*   **適用版本**：v1.1。
+*   **裁決**：媒體直載免認證定案——`pbs.twimg.com` 縮圖
+    （`?format=<ext>&name=small/medium/large/orig`；`format` 必填且沿用
+    `media_url_https` 副檔名、`name` 選填）與 `video.twimg.com` mp4
+    variant（最高位元率，展開播放來源——D13）均無簽章、無過期參數、
+    不需憑證；官方 API 限流體系（`x-rate-limit-*`、OAuth 權杖、
+    docs.x.com 體系）不適用於媒體 CDN；403 僅限保護/已刪內容。P0' 實抓
+    收尾：縮圖 10/10、影片 5/5 全 200。降級退路（解析＋計數標示＋外開）
+    保留為應急。
+*   **依據**：需求方 2026-11-14 裁決「搜尋並驗證」＋本輪查證（v1.1 設計
+    §1.7）＋P0' 實抓（〈v1.1 P0' 探測結論〉媒體節）。
+*   **偏離登錄**：無新增（媒體出口偏離已登錄於 D15；本節為免認證事實的
+    定案與實證收尾）。
+
+## 規格 REQ×版本適用性對照表（Task 15，2026-11-14）
+
+> 機械查閱點：登錄 v1.1 新適用／翻轉／偏離的規格 REQ 條目在兩輪的適用
+> 狀態與對應裁決編號（D10↔REQ-INV-02 的翻轉先前無對照點，本表補齊）。
+> 「不適用」＝該輪範圍外；「偏離」＝行為與條文字面不同（細節見對應
+> D 節）；其餘 REQ 的輪次歸屬沿用各輪設計文件的範圍清單，不在此重列。
+
+| REQ 條目 | 章節域 | v1 狀態 | v1.1 狀態 | 裁決編號 |
+| --- | --- | --- | --- | --- |
+| `REQ-DAT-011` | 輸出欄位（媒體欄） | 不適用（媒體域不在 v1） | 適用（子集：`Media` 欄承載媒體 URL 語義） | D15 |
+| `REQ-DAT-013` | `work_type` 三值 | 不適用 | 適用 | D13 |
+| `REQ-DAT-015` | `extended_entities` 優先 | 不適用 | 適用（`legacy.extended_entities.media` 單錨，無 fallback） | D13／D15 |
+| `REQ-DAT-016` | mp4 最高位元率 | 不適用 | 適用（擴及 GIF——D13） | D13 |
+| `REQ-DAT-018` | 下載參數與檔名 | 不適用 | 部分（`?format=…&name=…` 參數語義採用；`<序號>.jpg/.mp4` 落盤檔名不適用——app 直載渲染、不落序號檔） | D22 |
+| `REQ-WEB-069` | 身分與憑證綁定 | 不適用（web 控制台域） | 適用（身分語義採用；409 API 行為不適用） | D11 |
+| `REQ-WEB-070` | 同帳號重複綁定 | 不適用（web 控制台域） | 適用（同 UserID 覆蓋同鍵；409 API 行為不適用） | D11 |
+| `REQ-TRN-010` | X 流量單一出口 | 適用 | 適用＋偏離（媒體 CDN 獨立出口） | D15（D22 實證） |
+| `REQ-INV-02` | 代理 fail-closed | 適用 | 修訂（代理可選、直連為基線、顯式配置仍採用） | D10 |
 
 ## spike 結論：tls-client 能力對照（Task 0 Step 2，2026-11-11）
 
@@ -335,25 +574,16 @@ v1.0.13-utls）。
     `legacy` 缺失時回退 `result.core.screen_name`／`result.core.name`
     （Viewer 萃取路徑已實證該位置）。本任務依紀律不動 Task 12 程式碼，
     僅如實登記。
+*   **回註（2026-11-14，Task 15）**：上項發現已於 v1 輪修復——`postUser`
+    於 `legacy` 缺失時回退 `result.core.screen_name`／`result.core.name`
+    （與 Viewer 萃取路徑同形），修復後複驗 30/30 通過；本登記待辦結案
+    （已由 v1.1 輪受理並核銷）。
 
 ### D10 代理改為可選：正常用途直連（需求方 2026-11-13 裁決）
 
-* **裁決**：桌面 app（正常用途、自有帳號）不再要求代理——`ResolveProxy`
-  三層皆無時回 `("", nil)` 直連；transport 以 `Options.AllowDirect: true`
-  於 app 層顯式選入（引擎預設仍 fail-closed）。系統偵測命中但預檢失敗 →
-  視同未偵測到（落入直連）；使用者顯式配置（`X_PROXY` 等）仍原樣採用。
-* **依據**：OQ12 探測實證（直連可達且被正常接受、0×226/344，見探測節）＋
-  需求方裁決「設計給正常用途，代理應該用不到」。REQ-INV-02 的
-  fail-closed 原契約針對多帳號控制台的強制每帳號代理部署；本桌面 app
-  單一自有帳號情境予以修訂。
-* **偏離登錄**：REQ-INV-02 於本 app 之適用修訂為「代理可選、直連為基線、
-  顯式配置的代理仍被採用」。成本：直連暴露真實 IP 且無指紋代理保護——
-  若 X 日後對該出口 IP 形態收緊風控（226/344 上升），重新啟用代理即可
-  （transport 支援不變）。
-* **配套**：註冊表快照經 mygo.json `resources` 出貨至執行檔旁（MyGO 會
-  攤平路徑：出貨為 exe 旁的 `graphql.json`；`registryPath()` 優先 exe
-  目錄、退回開發期的 `static/graphql.json`）——修正 L2 後首次實機
-  登入的兩個失敗根因（快照未出貨＋代理 fail-closed）。
+> **歸屬正規化（2026-11-14，Task 15）**：本節原嵌於〈L2 驗收記錄〉之下
+> （D1–D9 掛〈已定案裁決〉、D10 嵌 L2 節的序列斷裂）；現已移至
+> 〈已定案裁決〉節 D9 之後，內容逐字保留、僅增「適用版本」標註。
 
 ## v1.1 P0' 探測結論（Task 2，2026-11-14）
 
@@ -401,3 +631,28 @@ v1.0.13-utls）。
   資料面 relay 屬 v2）」。
 * probe11 的 `search` 子命令與變數修正（CompactJSON 前序列化、product
   變數）隨本節 commit——工具屬 T2 執行儀器。
+
+## v1.1 收尾登錄（Task 15，2026-11-14）
+
+*   **格式化鏈執行實錄（D17）**：`cd X` → `gofumpt -w -extra .`
+    （gofumpt v0.10.0；基線 18 檔全數格式化，diff 逐行複核為純格式變更
+    ——CJK 全形括號註解縮排、同型參數合併（`opName string, cursor
+    string` → `opName, cursor string`，編譯等價）、複合值與引數串換行、
+    註解對齊，無語義變更）→ golangci-lint v2.15.0（v2 預設 linter；首輪
+    18 指摘＋複驗 6 指摘全數修復——errcheck 之未檢查 `Close` 回傳值以
+    `_ =` 顯式捨棄（沿用既有 idiom）、staticcheck QF1001 以 De Morgan
+    等價改寫（`!(a<b && b<c)` → `a>=b || b>=c`，邏輯逐一核對等價，斷言
+    行為不變）→ `golangci-lint run` 0 issues、`go vet ./...` 乾淨、
+    `go test -race -count=1 ./...` 10 套件全綠。oxfmt 不在鏈中（需求方
+    2026-11-14 裁決移除）；`vendor/XApis/gateway/` 為獨立 Go module，
+    未觸碰。
+*   **雙平台建置（D10 配套複證）**：`CGO_ENABLED=0 go tool mygo build
+    -platform windows/amd64 -skip-installer` 通過，`graphql.json` 確認
+    出貨於 exe 旁（mygo.json `resources` 攤平，D10「配套」項的機制於
+    v1.1 末端複證）；`go tool mygo build -platform web` 冒煙通過（web
+    為測試載體，資料面 relay 屬 v2——沿 Task 2 修訂登錄）。
+*   **L2 RAM 驗收（D14）——待驗**：三場景量測（閒置／100 帖含媒體捲動／
+    播放中，行程峰值 <80 MiB）需真實憑證，由控制器另行執行；數值取得後
+    回寫本節與 D14「驗收狀態」。實作者端已驗事實：v1 L2 基線峰值 30 MiB
+    量級（見〈L2 驗收記錄〉RAM 基線）；v1.1 單元防線釘測全綠（解碼位元
+    組 LRU 逐出、單檔 8 MiB 超限拒收、世代邊界過期丟棄）。

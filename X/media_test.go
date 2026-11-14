@@ -210,7 +210,7 @@ func TestHomeView_ThumbFailRetryOnlyOnClick(t *testing.T) {
 	})
 	fake := &fakeSession{home: pageQueue(pageOf([]post{mediaPost("m1", thumbURL)}, ""))}
 	a, tt := homeFixture(t, fake)
-	a.gen = 1 // 非零世代：其後的點擊重試派發捕捉 gen=1，回寫比對一致（T6 形）
+	a.gen = 1  // 非零世代：其後的點擊重試派發捕捉 gen=1，回寫比對一致（T6 形）
 	tt.Frame() // 失敗回寫套用
 	if !tt.HasText(thumbRetryText) {
 		t.Fatalf("失敗後應呈可重試按鈕（%q），texts %q", thumbRetryText, tt.Texts())

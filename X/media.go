@@ -58,7 +58,7 @@ var thumbClient = &http.Client{Timeout: thumbFetchTimeout}
 // fetchImage 是媒體下載接縫：測試注入替身；正式路徑＝獨立輕量
 // http.Client 直載公開 CDN（D15/D22——REQ-TRN-010 偏離已登錄：媒體 CDN
 // ≠ GraphQL API 單一出口）。守門：HTTP 200、Content-Type 必須 image/*
-//（否則錯誤）、單檔 ≤8 MiB（超限即錯誤，不整讀入）。錯誤文案僅含下載
+// （否則錯誤）、單檔 ≤8 MiB（超限即錯誤，不整讀入）。錯誤文案僅含下載
 // 事實，不含任何憑證材料（REQ-INV-01）。
 var fetchImage = func(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -69,7 +69,7 @@ var fetchImage = func(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("縮圖下載失敗: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("縮圖下載失敗：HTTP %d", resp.StatusCode)
 	}
@@ -230,7 +230,7 @@ func (a *app) ensureThumb(kind int, f *timelineState, url string) {
 }
 
 // finishThumb 完成回寫（經 publish 於主執行緒套用）：先清除在途標記
-//（即使世代／槽檢查不過也必清——過期結果丟棄，該 URL 可再派發）；
+// （即使世代／槽檢查不過也必清——過期結果丟棄，該 URL 可再派發）；
 // ui.DecodeImage 於主執行緒執行（保守：Bitmap 建構的執行緒約束未經查
 // 證，主執行緒是安全面）；下載或解碼失敗 → 記失敗態（佔位改可重試，
 // 不自動重試）；成功 → put 入 LRU，次框渲染即命中。

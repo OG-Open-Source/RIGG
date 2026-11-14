@@ -52,7 +52,8 @@ func MarshalOrdered(p OrderedParams) ([]byte, error) {
 		buf = key
 		if !json.Valid([]byte(kv.V)) {
 			return nil, fmt.Errorf(
-				"graphql: param %d (%s): V must be pre-serialized JSON, got %q", i, kv.K, kv.V)
+				"graphql: param %d (%s): V must be pre-serialized JSON, got %q", i, kv.K, kv.V,
+			)
 		}
 		buf = append(buf, ':')
 		buf = append(buf, kv.V...)

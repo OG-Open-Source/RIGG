@@ -277,7 +277,8 @@ func TestLowercaseNames_REQ_HDR_013(t *testing.T) {
 	}{
 		{"logged_in_full", lineLogin, map[string]string{
 			"referer": "https://x.com/home", "x-guest-token": "GT",
-			"x-client-transaction-id": "TX", "Mixed-Case-Unknown": "v"}},
+			"x-client-transaction-id": "TX", "Mixed-Case-Unknown": "v",
+		}},
 		{"guest_bare", lineGuest, nil},
 		{"empty_line", lineEmpty, nil},
 	}

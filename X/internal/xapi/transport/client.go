@@ -25,7 +25,7 @@ const defaultTimeout = 30 * time.Second
 var navigationHeaders = []string{"upgrade-insecure-requests", "sec-fetch-user"}
 
 // transportHeaderSequence 是 transport 補齊標頭與 cookie 的固定輸出序
-//（Chrome 慣例相對序）：transport 實際補上的標頭依此序置於 Header-Order
+// （Chrome 慣例相對序）：transport 實際補上的標頭依此序置於 Header-Order
 // 前段；cookie 為呼叫端注入（REQ-AUTH-001，XAuth 單一持有者），存在時恆
 // 錨定於 priority 之前（Chrome 觀察：cookie 在 priority 前）。
 var transportHeaderSequence = []string{
@@ -36,7 +36,7 @@ var transportHeaderSequence = []string{
 }
 
 // supportedProxySchemes 是 tls-client v1.18.0 支援的代理 scheme
-//（http／https／socks5／socks5h／socks4）；其餘於 New 即拒絕（fail-closed，
+// （http／https／socks5／socks5h／socks4）；其餘於 New 即拒絕（fail-closed，
 // 不等到送出才失敗，更不得直連）。
 var supportedProxySchemes = map[string]bool{
 	"http": true, "https": true, "socks5": true, "socks5h": true, "socks4": true,
@@ -125,12 +125,14 @@ func New(fp *fingerprint.Fingerprint, opts Options) (*Client, error) {
 	}
 	hc, err := tls_client.NewHttpClient(
 		tls_client.NewNoopLogger(),
-		append(proxyOpts,
+		append(
+			proxyOpts,
 			tls_client.WithClientProfile(profiles.Chrome_150),
 			tls_client.WithCookieJar(noopCookieJar{}),
 			tls_client.WithNotFollowRedirects(),
 			tls_client.WithTimeoutMilliseconds(ms),
-		)...)
+		)...,
+	)
 	if err != nil {
 		return nil, &xerrors.TransportError{Msg: fmt.Sprintf("tls-client 建構失敗: %v", err)}
 	}
@@ -275,7 +277,7 @@ func deriveSecFetchSite(host string) string {
 //  3. 其餘現存標頭（呼叫端已設但未宣告者），字典序收尾以保確定性。
 //
 // 值全小寫、涵蓋全部現存標頭（magic key 除外）、不含 Header-Order 自身
-//（避免自引用）；fhttp 寫出時以存入原樣大小寫呈現、magic key 不上 wire。
+// （避免自引用）；fhttp 寫出時以存入原樣大小寫呈現、magic key 不上 wire。
 func attachHeaderOrder(h fhttp.Header, added []string) {
 	present := make(map[string]bool, len(h))
 	for k := range h {

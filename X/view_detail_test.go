@@ -358,7 +358,7 @@ func TestNarrowWindowRowClickDoesNotOpenDetail(t *testing.T) {
 
 // TestNarrowResizeCollapsesDetail（窄窗閘第二入口，Important 1 修復釘注）：
 // ≥1024 開帖（播放器活躍）後縮窗至 <1024 → 窄幀遇殘留 detail 即幀收合
-//（closeDetail，§8.6「離開展開檢視」語義）：播放器 Close 恰一次、
+// （closeDetail，§8.6「離開展開檢視」語義）：播放器 Close 恰一次、
 // detail／player 歸零——展開檢視已不渲染，收合按鈕隨之消失。
 func TestNarrowResizeCollapsesDetail(t *testing.T) {
 	var players []*fakePlayer

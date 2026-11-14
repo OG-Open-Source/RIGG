@@ -296,7 +296,7 @@ func newProbeReqRaw(name string, raw json.RawMessage, err error) probeReq {
 // runSearchCmd：search 子命令（Task 2 儀器）——args: <queryId> <query>
 // [product] [count]。以記憶體 Operation 送 SearchTimeline：REQ-GQL-005
 // 恆 POST；FeatureSwitches 空 → Features() 回 nil → features 整鍵省略
-//（空 features 臂——P0' 實證可行）；variables 需含 product（P0' 422
+// （空 features 臂——P0' 實證可行）；variables 需含 product（P0' 422
 // 實證：GRAPHQL_VALIDATION_FAILED "must be defined: variable product"）。
 // queryId 為公開介面事實，由參數傳入、不寫死於工具。
 func runSearchCmd(args []string) {

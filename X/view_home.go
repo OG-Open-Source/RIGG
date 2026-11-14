@@ -65,13 +65,13 @@ const (
 //     欄頂（無側欄）。
 //   - band 1（768–1023）：兩欄——左側欄（帳號清單＋tabs）＋時間線。
 //   - band 2（1024–1199）：完整版型——側欄＋時間線＋展開檢視並列
-//    （a.detail 非 nil 時右欄 detailView）。
+//     （a.detail 非 nil 時右欄 detailView）。
 //   - band 3（≥1200）：同 band 2＋內容欄 max-width 640 置中、兩側留白。
 //
 // band <2 不渲染展開檢視：殘留 detail 即幀收合（closeDetail，冪等；T13
 // 語義經 band 閘延續——收合按鈕只在 detailView，不收合將使活躍播放器無
 // 收合路徑）。移除帳號的確認 Modal 於各帶頂層呈現；切換失敗的錯誤區
-//（switchErr）呈於頂列之下。
+// （switchErr）呈於頂列之下。
 func (a *app) homeView(c *ui.Context) {
 	w, _ := c.Size()
 	band := a.layoutBand(w)
@@ -149,7 +149,7 @@ func (a *app) homeToolbar(c *ui.Context, band int) {
 }
 
 // accountMenu 繪製左上帳號選單（ui.MenuButton，Task 14／D19）：各帳號
-//（accountLabel：失效者加「（失效）」，點擊失效者走「重新貼上 Cookie」
+// （accountLabel：失效者加「（失效）」，點擊失效者走「重新貼上 Cookie」
 // 入口、活躍者勾選無操作、其餘 switchTo）＋「新增帳號」（達 maxAccounts
 // 呈提示態——禁用＋上限文案 Subtitle）＋「移除 @xxx」（開 Modal 二次確
 // 認）。切換進行中（switchBusy）動作全數禁用（帳號選單 Task 8 接線：
@@ -183,7 +183,7 @@ func (a *app) accountMenu(c *ui.Context) {
 		}
 		m.Separator()
 		for _, acc := range a.accounts {
-			if m.Item("移除 @"+acc.ScreenName).Disabled(a.switchBusy).Chosen() {
+			if m.Item("移除 @" + acc.ScreenName).Disabled(a.switchBusy).Chosen() {
 				a.removeUserID = acc.UserID
 				a.removeOpen = true // Modal 二次確認（removeModal）
 			}
@@ -193,7 +193,7 @@ func (a *app) accountMenu(c *ui.Context) {
 
 // accountSelect 是 band 0 的帳號收合（ui.Select 下拉，D20）：選項為帳號
 // 標籤（失效者含「（失效）」）；選擇即分派——失效者走重登入口、其餘切換
-//（活躍者無操作）。切換進行中禁用（防再入造成呈現錯位——同步由
+// （活躍者無操作）。切換進行中禁用（防再入造成呈現錯位——同步由
 // syncAccountSelection 於序列收斂時回寫）。
 func (a *app) accountSelect(c *ui.Context) {
 	if len(a.accounts) == 0 {
@@ -220,7 +220,7 @@ func (a *app) accountSelect(c *ui.Context) {
 
 // openRelogin 進入失效帳號的「重新貼上 Cookie」入口（login view 變體，
 // D20/§8.5）：目標帳號預標（loginUserID），提交成功 → 更新該帳號 cookie
-//（覆蓋同鍵）→ 沿 switchTo 原地重試切換（submitLogin 的 relogin 分支）。
+// （覆蓋同鍵）→ 沿 switchTo 原地重試切換（submitLogin 的 relogin 分支）。
 func (a *app) openRelogin(userID string) {
 	a.beginLoginVariant(loginModeRelogin, userID)
 }
@@ -285,7 +285,7 @@ func (a *app) sidebarChosen(id string) {
 }
 
 // removeModal 繪製移除帳號的二次確認（ui.Modal）：確認走 removeConfirm
-//（背景 deleteAccount）；取消／Escape／點外由 Modal 的 *open 語義收起。
+// （背景 deleteAccount）；取消／Escape／點外由 Modal 的 *open 語義收起。
 func (a *app) removeModal(c *ui.Context) {
 	if !a.removeOpen {
 		return

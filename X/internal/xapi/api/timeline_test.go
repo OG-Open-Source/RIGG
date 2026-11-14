@@ -774,7 +774,7 @@ func TestHomeLatestTimeline_WithSeenPOST(t *testing.T) {
 // TestHomeLatestTimeline_ExtractsCursorAndPosts：合成 timeline 回應（含
 // promoted- 前綴條目、result 帶 promotedMetadata 的 tweet- 條目、跨段同
 // work_id 重現、TweetWithVisibilityResults 包裹）→ 解析與 HomeTimeline 同構
-//（D16）：去促銷、work_id 去重、首見順序、Bottom 游標（REQ-WEB-104／
+// （D16）：去促銷、work_id 去重、首見順序、Bottom 游標（REQ-WEB-104／
 // REQ-RD-012/013 語義）；同一資料經 HomeTimeline 解析的結果逐欄位一致。
 func TestHomeLatestTimeline_ExtractsCursorAndPosts(t *testing.T) {
 	inner := tlResult("8004", "wrapped")

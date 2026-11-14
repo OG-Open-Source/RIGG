@@ -162,7 +162,7 @@ func (s *Sender) Send(op *graphql.Operation, variables graphql.OrderedParams, re
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 6a) 讀 body（上限 16 MiB，REQ-INV-14）：多讀一位元組偵測超限。
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))

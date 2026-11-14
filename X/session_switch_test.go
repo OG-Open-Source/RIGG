@@ -75,7 +75,7 @@ func TestNewSessionForUsesAccountKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSessionFor(9001): %v", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	st, ok := stores[accountKey("9001")]
 	if !ok {
@@ -103,12 +103,12 @@ func TestWriteThroughTargetsAccountKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSessionFor(9001): %v", err)
 	}
-	defer s1.Close()
+	defer func() { _ = s1.Close() }()
 	s2, err := newSessionFor(Account{UserID: "9002", CookieLine: "c"}, "")
 	if err != nil {
 		t.Fatalf("newSessionFor(9002): %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 
 	if s1.auth.Store() == nil || s2.auth.Store() == nil {
 		t.Fatal("兩會話皆應接線 write-through 儲存層")

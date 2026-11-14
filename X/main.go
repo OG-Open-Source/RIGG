@@ -514,8 +514,8 @@ func (a *app) updateAccount(acc Account) {
 }
 
 // logout 登出至 login view（D20 帳號選單：移除活躍帳號）：斬斷會話子樹
-//（在途 feed 工作收斂）、關閉會話（transport）、歸零 home 狀態——detail
-//（含播放器，§8.6）、搜尋（ephemeral）、三槽（墓碑替換）；a.sess=nil 使
+// （在途 feed 工作收斂）、關閉會話（transport）、歸零 home 狀態——detail
+// （含播放器，§8.6）、搜尋（ephemeral）、三槽（墓碑替換）；a.sess=nil 使
 // view 路由回 login（首次登入形）。活躍帳號快照與選擇呈現一併復位。
 func (a *app) logout() {
 	if a.sessCancel != nil {

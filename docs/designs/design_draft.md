@@ -1,7 +1,7 @@
 # MyGO X 引擎 v1（XApis-golang）
 
 *   **Author:** 需求方（XApis-golang）
-*   **Status:** Draft
+*   **Status:** **Superseded**（被 `docs/designs/x-engine-v1.md` 取代——v1 的草稿副本，保留僅為歷史）
 *   **Date:** 2026-11-11
 
 --------------------------------------------------------------------------------

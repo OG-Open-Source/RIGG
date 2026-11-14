@@ -86,10 +86,12 @@ func tlVideoNode(mediaType, mediaURL string, variants ...map[string]any) map[str
 // legacy.extended_entities 實際路徑同錨相容。
 func TestMediaExtractionPhoto(t *testing.T) {
 	data := tlData([]map[string]any{
-		tlMediaEntry("tweet-1", "1001", "photo post",
+		tlMediaEntry(
+			"tweet-1", "1001", "photo post",
 			tlPhotoNode("https://pbs.twimg.test/media/PHOTO1.jpg", 120, 80, 2048, 1365),
 		),
-		tlMediaEntry("tweet-2", "1002", "no extension",
+		tlMediaEntry(
+			"tweet-2", "1002", "no extension",
 			tlPhotoNode("https://pbs.twimg.test/media/BARE2", 60, 40, 640, 427),
 		),
 	})
@@ -146,7 +148,8 @@ func TestMediaExtractionPhoto(t *testing.T) {
 // （P0' 實證：PNG 來源誤用 format=jpg → 404——Review Focus 5 釘測）。
 func TestMediaExtractionPreservesFormat(t *testing.T) {
 	data := tlData([]map[string]any{
-		tlMediaEntry("tweet-1", "1101", "png post",
+		tlMediaEntry(
+			"tweet-1", "1101", "png post",
 			tlPhotoNode("https://pbs.twimg.test/media/PNGSRC.png", 100, 100, 900, 900),
 		),
 	})
@@ -175,13 +178,16 @@ func TestMediaExtractionPreservesFormat(t *testing.T) {
 // 無法換算實際值，寬高不強求）；節點無 media_url_https → ThumbURL 留空。
 func TestMediaExtractionVideoHighestBitrate(t *testing.T) {
 	data := tlData([]map[string]any{
-		tlMediaEntry("tweet-1", "1201", "video post",
-			tlVideoNode("video", "https://pbs.twimg.test/media/VIDPOST1.jpg",
+		tlMediaEntry(
+			"tweet-1", "1201", "video post",
+			tlVideoNode(
+				"video", "https://pbs.twimg.test/media/VIDPOST1.jpg",
 				tlVariant("application/x-mpegURL", 2880000, "https://video.twimg.test/vid/M3U8A.m3u8"),
 				tlVariant("video/mp4", 832000, "https://video.twimg.test/vid/MP4LOW.mp4"),
 				tlVariant("video/mp4", 2176000, "https://video.twimg.test/vid/MP4HIGH.mp4"),
 			),
-			tlVideoNode("video", "",
+			tlVideoNode(
+				"video", "",
 				tlVariant("video/mp4", 632000, "https://video.twimg.test/vid/MP4B.mp4"),
 			),
 		),
@@ -221,8 +227,10 @@ func TestMediaExtractionVideoHighestBitrate(t *testing.T) {
 // mp4 variant（不採 m3u8）。
 func TestMediaExtractionGifUsesMP4(t *testing.T) {
 	data := tlData([]map[string]any{
-		tlMediaEntry("tweet-1", "1301", "gif post",
-			tlVideoNode("animated_gif", "https://pbs.twimg.test/media/GIFPOST1.jpg",
+		tlMediaEntry(
+			"tweet-1", "1301", "gif post",
+			tlVideoNode(
+				"animated_gif", "https://pbs.twimg.test/media/GIFPOST1.jpg",
 				tlVariant("application/x-mpegURL", 1280000, "https://video.twimg.test/vid/GIFA.m3u8"),
 				tlVariant("video/mp4", 960000, "https://video.twimg.test/vid/GIFB.mp4"),
 			),
@@ -273,8 +281,10 @@ func TestUnknownTypeSkipped(t *testing.T) {
 		map[string]any{"type": "xyz", "media_url_https": "https://pbs.twimg.test/media/XYZ1.jpg"},
 	}}
 	data := tlData([]map[string]any{
-		tlMediaEntry("tweet-1", "1501", "mixed media",
-			tlVideoNode("xyz", "https://pbs.twimg.test/media/BADPOST.jpg",
+		tlMediaEntry(
+			"tweet-1", "1501", "mixed media",
+			tlVideoNode(
+				"xyz", "https://pbs.twimg.test/media/BADPOST.jpg",
 				tlVariant("video/mp4", 1000, "https://video.twimg.test/vid/BAD.mp4"),
 			),
 			tlPhotoNode("https://pbs.twimg.test/media/KEPT1.jpg", 10, 20, 300, 400),
