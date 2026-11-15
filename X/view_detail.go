@@ -19,8 +19,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
@@ -244,6 +246,24 @@ func (a *app) startVideoPlayback(url string) {
 			}
 			a.player = pl
 			a.playerPath = path
+			// v1.1.3 Ready 逾時 fallback：8 秒未就緒且無 Err → 失敗 UX
+			//（外開 fallback 可用），不再無限停在海报。
+			vp, _ := pl.(*ui.VideoPlayer)
+			a.goSession(func(ctx context.Context) {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(8 * time.Second):
+				}
+				a.publish(func() {
+					if gen != a.gen || a.detail != d || a.player != pl {
+						return
+					}
+					if vp != nil && !vp.Ready() && vp.Err() == nil {
+						a.dmedia.playErr = errors.New("播放器 8 秒內無法就緒（下載或解碼停滯）")
+					}
+				})
+			})
 		})
 	})
 }
@@ -306,7 +326,7 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 	case "video":
 		switch {
 		case a.dmedia.playErr != nil:
-			a.mediaFailView(c, p)
+			a.mediaFailDetail(c, a.dmedia.playErr.Error()) // v1.1.3 診斷浮面
 		case a.player != nil:
 			a.playerView(c, m.ThumbURL)
 		case a.playerLoading:
@@ -317,7 +337,7 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 	case "gif":
 		switch {
 		case a.dmedia.playErr != nil:
-			a.mediaFailView(c, p)
+			a.mediaFailDetail(c, a.dmedia.playErr.Error())
 		case a.player != nil:
 			a.playerView(c, m.ThumbURL)
 		default:
@@ -326,10 +346,20 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 	}
 }
 
-// playerView 渲染活躍播放器（Ready → ui.Video；未 Ready → 縮圖命中或佔
-// 位——thumbLRU 唯讀、不派發下載，同既有語義）。
+// playerView 渲染活躍播放器（Ready → ui.Video；Err → 失敗 UX 帶真實錯
+// 誤描述——v1.1.3 診斷：解碼錯誤先前被靜默吞掉，播放器永遠停在海报；未
+// Ready → 縮圖命中或佔位——thumbLRU 唯讀、不派發下載）。
 func (a *app) playerView(c *ui.Context, thumbURL string) {
-	if vp, ok := a.player.(*ui.VideoPlayer); ok && vp.Ready() {
+	vp, ok := a.player.(*ui.VideoPlayer)
+	if !ok {
+		a.detailPlaceholder(c)
+		return
+	}
+	if e := vp.Err(); e != nil {
+		a.mediaFailDetail(c, "播放器解碼失敗："+e.Error())
+		return
+	}
+	if vp.Ready() {
 		a.detailMediaBox(c, func() {
 			ui.Video(c, vp).Fill().Fit(ui.Contain)
 		})
@@ -347,20 +377,23 @@ func (a *app) playerView(c *ui.Context, thumbURL string) {
 }
 
 // videoPosterView 是 video 的懶建立海報（D24）：縮圖命中即呈、未命中佔
-// 位；播放鈕點擊才 startVideoPlayback（下載暫存檔＋建播放器——系統框架
-// 初始化不發生在展開瞬間，P4）。
+// 位；播放鈕疊於海報中央（可發現性——v1.1.2 的下方按鈕被解讀為「還是
+// 一張圖片」）。點擊才 startVideoPlayback（下載暫存檔＋建播放器）。
 func (a *app) videoPosterView(c *ui.Context, thumbURL, url string) {
 	a.detailMediaBox(c, func() {
+		shown := false
 		if thumbURL != "" {
 			if src, ok := thumbLRU.get(thumbURL); ok {
 				ui.Image(c, src).Fill().Fit(ui.Contain)
-				return
+				shown = true
 			}
 		}
-		t := c.Theme()
-		ui.Text(c, detailLoadingText).TextColor(t.TextMuted)
+		if !shown {
+			t := c.Theme()
+			ui.Text(c, detailLoadingText).TextColor(t.TextMuted)
+		}
 	})
-	if ui.PrimaryButton(c, "播放").Clicked() {
+	if ui.PrimaryButton(c, videoPlayText).Clicked() {
 		a.startVideoPlayback(url)
 	}
 }
@@ -388,7 +421,24 @@ func (a *app) detailPlaceholder(c *ui.Context) {
 // 擎六 kind（app 層語義）——固定文案，不拼接錯誤原始訊息（REQ-INV-01
 // 同形：無憑證材料可能）。
 func (a *app) mediaFailView(c *ui.Context, p post) {
-	feedback.Alert(c, msgMedia, feedback.AlertProps{Type: feedback.Warning})
+	a.mediaFailDetail(c, "")
+}
+
+// mediaFailDetail 是帶診斷描述的媒體失敗 UX（v1.1.3 診斷浮面）：desc 非
+// 空 → Alert Description 呈現真實錯誤（app 層錯誤不含憑證材料），使使
+// 用者回報即可定位下載／解碼／系統框架哪一層。
+func (a *app) mediaFailDetail(c *ui.Context, desc string) {
+	t := c.Theme()
+	p := post{}
+	if a.detail != nil {
+		p = *a.detail
+	}
+	_ = t
+	feedback.Alert(c, msgMedia, feedback.AlertProps{
+		Type:        feedback.Warning,
+		Description: desc,
+		Selectable:  true,
+	})
 	if p.WorkURL != "" {
 		ui.Link(c, msgOpenExternal, Sanitize(p.WorkURL))
 	}

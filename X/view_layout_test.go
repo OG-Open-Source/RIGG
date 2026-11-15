@@ -101,55 +101,46 @@ func TestTesterRendersThreeWidths(t *testing.T) {
 // 動作呈提示態——選單內呈上限文案（Subtitle，彈出式選單渲染為內窗文字）
 // 且項目禁用：ChooseMenuItem 對禁用項回錯、不進入新增帳號流程。
 func TestAccountMenuShowsFiveAccountsCap(t *testing.T) {
+	// D28 契約：新增入口在頂列「＋」——上限（maxAccounts=5）時禁用，
+	// 點擊不得進入新增流程（loginMode 不變）。
 	a := newTestApp()
 	a.sess = &fakeSession{}
 	a.accounts = fiveAccounts()
 	a.activeID = a.accounts[0].UserID
 	tt := ui.NewTester(a.view, 1280, 720)
 	tt.Frame()
-	// 開啟帳號選單：5 帳號全列＋各帳號的移除項。
-	if err := tt.Click("帳號選單"); err != nil {
-		t.Fatalf("開啟帳號選單: %v", err)
+	if len(a.accounts) != maxAccounts {
+		t.Fatalf("前置：應為 5 帳號，得 %d", len(a.accounts))
 	}
-	menu := tt.Menu()
-	for _, acc := range a.accounts {
-		if !slices.Contains(menu, "@"+acc.ScreenName) {
-			t.Errorf("選單應列帳號 %q，得 %q", "@"+acc.ScreenName, menu)
-		}
-		if !slices.Contains(menu, "移除 @"+acc.ScreenName) {
-			t.Errorf("選單應有移除項 %q，得 %q", "移除 @"+acc.ScreenName, menu)
-		}
+	if err := tt.Click("＋"); err != nil {
+		t.Fatalf("點新增鈕: %v", err)
 	}
-	// 提示態：上限文案呈現＋項目禁用（選擇被拒）。
-	if !tt.HasText(accountCapText) {
-		t.Errorf("上限時「新增帳號」應呈提示態文案 %q，texts %q", accountCapText, tt.Texts())
-	}
-	if err := tt.ChooseMenuItem("新增帳號"); err == nil {
-		t.Error("上限時「新增帳號」應禁用（選擇不成立）")
-	}
+	tt.Frame()
 	if a.loginMode != loginModeNone {
-		t.Errorf("上限時點「新增帳號」不得進入新增流程，loginMode=%d", a.loginMode)
+		t.Errorf("上限時點「＋」不得進入新增流程，loginMode=%d", a.loginMode)
 	}
-	tt.CloseMenu()
+	if a.sess == nil {
+		t.Error("上限時不得離開 home")
+	}
 }
 
 // TestAccountMenuAddUnderCapEntersAddFlow：未達上限時「新增帳號」可選
 // ——進入 login view 的新增帳號變體（loginModeAdd）；「返回」復位回 home。
 func TestAccountMenuAddUnderCapEntersAddFlow(t *testing.T) {
+	// D28 契約：未達上限時頂列「＋」可點——進入 login view 的新增帳號
+	// 變體（loginModeAdd）；「返回」復位回 home。
 	a := newTestApp()
 	a.sess = &fakeSession{}
 	a.accounts = []Account{{UserID: "9201", ScreenName: "goated"}}
 	a.activeID = "9201"
 	tt := ui.NewTester(a.view, 1280, 720)
 	tt.Frame()
-	if err := tt.Click("帳號選單"); err != nil {
-		t.Fatalf("開啟帳號選單: %v", err)
+	if err := tt.Click("＋"); err != nil {
+		t.Fatalf("點新增鈕: %v", err)
 	}
-	if err := tt.ChooseMenuItem("新增帳號"); err != nil {
-		t.Fatalf("未達上限應可選「新增帳號」: %v", err)
-	}
+	tt.Frame()
 	if a.loginMode != loginModeAdd {
-		t.Fatalf("選擇後應進入新增帳號流程，loginMode=%d", a.loginMode)
+		t.Fatalf("點擊後應進入新增帳號流程，loginMode=%d", a.loginMode)
 	}
 	if !tt.HasText("新增帳號") || tt.HasText("時間線") {
 		t.Errorf("應呈 login view 的新增帳號變體（home 收起），texts %q", tt.Texts())
@@ -166,7 +157,7 @@ func TestAccountMenuAddUnderCapEntersAddFlow(t *testing.T) {
 	}
 }
 
-// TestRemoveActiveAccountLogsOut（D20 帳號選單）：選單「移除 @xxx」→
+// TestRemoveActiveAccountLogsOut（D28 契約）：頂列「−」移除活躍帳號 →
 // Modal 二次確認 → deleteAccount（帳號鍵刪除＋索引除名）＋記憶體快照除
 // 名；被移除者為活躍帳號 → 登出至 login view（a.sess=nil）。
 func TestRemoveActiveAccountLogsOut(t *testing.T) {
@@ -181,14 +172,11 @@ func TestRemoveActiveAccountLogsOut(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 720)
 	tt.Frame()
-	if err := tt.Click("帳號選單"); err != nil {
-		t.Fatalf("開啟帳號選單: %v", err)
-	}
-	if err := tt.ChooseMenuItem("移除 @u9501"); err != nil {
-		t.Fatalf("選移除項: %v", err)
+	if err := tt.Click("−"); err != nil {
+		t.Fatalf("點移除鈕: %v", err)
 	}
 	if !a.removeOpen || a.removeUserID != "9501" {
-		t.Fatalf("移除項應開啟確認 Modal，open=%v uid=%q", a.removeOpen, a.removeUserID)
+		t.Fatalf("移除鈕應開啟確認 Modal，open=%v uid=%q", a.removeOpen, a.removeUserID)
 	}
 	tt.Frame() // Modal 呈現
 	if err := tt.Click("確認移除"); err != nil {

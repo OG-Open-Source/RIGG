@@ -133,6 +133,7 @@ func TestClosingSearchClearsState(t *testing.T) {
 	tt.Frame()
 	a.submitSearch("MyGO")
 	tt.Frame()
+	tt.Frame() // submitSearch 為狀態直呼：其後兩幀使搜尋檢視穩定可互動（測試慣例）
 	if !a.searchOpen || len(a.feeds[feedSearch].posts) != 2 {
 		t.Fatalf("前置：搜尋應已呈現，open=%v posts=%q", a.searchOpen, workIDs(a.feeds[feedSearch].posts))
 	}

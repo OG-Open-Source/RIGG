@@ -18,6 +18,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
+	"github.com/lobehub/lobe-mygo/pkg/layout"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 )
 
@@ -88,10 +89,26 @@ const (
 // 作，Router URL/歷史語義延後 v1.2（DECISIONS〈v1.1 收尾登錄〉）。移除
 // 帳號的確認 Modal 於各帶頂層呈現；切換失敗的錯誤區（switchErr）呈於頂
 // 列之下。
+// homeView 是 home 畫面本體（D28 RWD 重構）：頂列（帳號新增/移除＋搜
+// 尋）＋ Lobe DraggableSideNav（帳號側欄——拖曳縮放、收合成 64 DIP
+// rail、狀態傳播 body，取代 D20 的四帶手寫側欄）＋內容區（feed；展開
+// 檢視 band<2 全寬頁、band≥2 右欄並列——F2 裁決不變）。tabs（Segmented）
+// 統一呈於 feed 標題列（各帶一致）。帶轉換跨越 768 時自動收合/展開側
+// 欄（僅邊界介入，不與使用者的拖曳對抗）。
 func (a *app) homeView(c *ui.Context) {
 	theme.Apply(c) // Lobe MyGo 設計語言（淺色/深色隨系統；TokensOf 取對應 token）
 	w, _ := c.Size()
 	band := a.layoutBand(w)
+	// D28：跨越窄帶邊界時自動收合/展開側欄（初始 prevWidth 為 0——首幀
+	// 依寬度設定；之後僅邊界跨越時介入）。
+	if a.prevWidth >= bpTablet && w < bpTablet {
+		a.navExpanded = false
+	} else if a.prevWidth < bpTablet && w >= bpTablet && a.prevWidth > 0 {
+		a.navExpanded = true
+	} else if a.prevWidth == 0 {
+		a.navExpanded = w >= bpTablet
+	}
+	a.prevWidth = w
 	// 選單一律以主題彈出呈現（PopoverMenus）：與自繪 UI 同貌，內窗可檢
 	// 查（Menu／ChooseMenuItem／Texts）。
 	if c.MenuPresentation() != ui.PopoverMenus {
@@ -109,42 +126,93 @@ func (a *app) homeView(c *ui.Context) {
 				Selectable: true,
 			})
 		}
-		if band < 2 && a.detail != nil {
-			// 窄帶全寬展開檢視（F2）：feed（與 band 1 側欄）於展開期
-			// 間不可達——收合按鈕（detailView 內）closeDetail 返回
-			// feed，切換帳號／登出經墓碑 closeDetail 同效（§8.6 語義
-			// 不變：播放器生命週期隨 detail）。幀內快照：收合按鈕於本
-			// 幀歸零 detail 不影響本幀渲染。
-			d := *a.detail
-			ui.Column(c).Fill().Background(c.Theme().Surface).Children(func() {
-				a.detailView(c, d)
-			})
-			return
-		}
-		if band == 0 {
-			a.homeFeedView(c, band)
-		} else {
-			ui.Row(c).Fill().Children(func() {
-				a.homeSidebar(c)
-				// feed 欄：≥1200 內容 max-width 640 置中（AlignItems
-				// Center 置中其 max-width 卡片欄，D20）。
-				fc := ui.Column(c).Grow(1)
-				if band >= 3 {
-					fc = fc.AlignItems(ui.Center)
-				}
-				fc.Children(func() {
-					a.homeFeedView(c, band)
+		ui.Row(c).Fill().Children(func() {
+			// D28：帳號側欄（DraggableSideNav）——展開為帳號清單（頭像＋
+			// 標籤＋失效標記，點擊切換/重登），收合成頭像 rail。
+			layout.DraggableSideNav(c, &a.navWidth, &a.navExpanded,
+				layout.DraggableSideNavProps{MinWidth: 64, MaxWidth: 360},
+				func(nav layout.SideNavState) {
+					if nav.Expanded {
+						a.accountNavList(c)
+					} else {
+						a.accountNavRail(c)
+					}
 				})
-				if band >= 2 && a.detail != nil {
-					d := *a.detail // 幀內快照：收合按鈕於本幀歸零 detail 不影響本幀渲染
-					ui.Column(c).Width(detailPanelWidth).Background(c.Theme().Surface).Children(func() {
-						a.detailView(c, d)
-					})
-				}
+			// 內容區：展開檢視（窄帶全寬頁／寬帶右欄並列）＋feed。
+			if band < 2 && a.detail != nil {
+				// 窄帶全寬展開檢視（F2）：feed 於展開期間不可達——收合
+				// 按鈕（detailView 內）closeDetail 返回 feed，切換帳號／
+				// 登出經墓碑 closeDetail 同效（§8.6 語義不變）。幀內快
+				// 照：收合按鈕於本幀歸零 detail 不影響本幀渲染。
+				d := *a.detail
+				ui.Column(c).Fill().Background(c.Theme().Surface).Children(func() {
+					a.detailView(c, d)
+				})
+				return
+			}
+			fc := ui.Column(c).Grow(1)
+			if band >= 3 {
+				fc = fc.AlignItems(ui.Center)
+			}
+			fc.Children(func() {
+				a.homeFeedView(c, band)
 			})
-		}
+			if band >= 2 && a.detail != nil {
+				d := *a.detail // 幀內快照：收合按鈕於本幀歸零 detail 不影響本幀渲染
+				ui.Column(c).Width(detailPanelWidth).Background(c.Theme().Surface).Children(func() {
+					a.detailView(c, d)
+				})
+			}
+		})
 	})
 	a.removeModal(c)
+}
+
+// accountNavList 是側欄展開態的帳號清單（D28）：Avatar＋標籤（失效者
+// 加「（失效）」、活躍者勾選），點擊切換/重登；新增/移除在頂列（＋/−，
+// 全帶）。Lobe Avatar（marbled 色播種 ScreenName——D27 wave 2 項目提前
+// 兌現：側欄的頭像語義 MyGO ui.Avatar 無 marbled 面）。
+func (a *app) accountNavList(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Padding(8, 12).Gap(4).Children(func() {
+		ui.Text(c, "帳號").TextColor(t.TextMuted).FontSize(12)
+		for _, acc := range a.accounts {
+			acc := acc
+			invalid := a.accInvalid[acc.UserID]
+			active := acc.UserID == a.activeID
+			row := ui.Row(c).Padding(6, 8).Gap(8).AlignItems(ui.Center)
+			row.Children(func() {
+				display.Avatar(c, acc.ScreenName, display.AvatarProps{Size: 28})
+				ui.Column(c).Gap(0).Children(func() {
+					label := acc.ScreenName
+					if invalid {
+						label += "（失效）"
+					}
+					ui.Text(c, Sanitize("@"+label)).FontSize(13)
+				})
+			})
+			row = row.Background(t.Surface)
+			if row.Clicked() {
+				switch {
+				case invalid:
+					a.openRelogin(acc.UserID)
+				case !active:
+					a.switchTo(acc.UserID)
+				}
+			}
+		}
+	})
+}
+
+// accountNavRail 是側欄收合態（64 DIP rail）：各帳號 Avatar 直欄，點擊
+// 切換/重登（標籤省略——rail 語義）。
+func (a *app) accountNavRail(c *ui.Context) {
+	ui.Column(c).Padding(8, 8).Gap(8).AlignItems(ui.Center).Children(func() {
+		for _, acc := range a.accounts {
+			acc := acc
+			display.Avatar(c, acc.ScreenName, display.AvatarProps{Size: 32})
+		}
+	})
 }
 
 // homeToolbar 繪製頂列（D20：恆顯）：左上帳號選單（band 0 收合為
@@ -153,20 +221,15 @@ func (a *app) homeView(c *ui.Context) {
 // 方裁決：Desktop only）。
 func (a *app) homeToolbar(c *ui.Context, band int) {
 	ui.Toolbar(c, func() {
-		if band == 0 {
-			a.accountSelect(c)
-			// 窄帶補新增/移除入口（需求方實測回饋 2026-11-15：band 0
-			// 僅 Select 切換不可接受——T14 Minor 3 的裁決兌現）。移除
-			// 針對活躍帳號（Modal 二次確認沿 accountMenu 同路徑）。
-			if ui.Button(c, "＋").Disabled(a.switchBusy || len(a.accounts) >= maxAccounts).Clicked() {
-				a.beginLoginVariant(loginModeAdd, "")
-			}
-			if ui.Button(c, "−").Disabled(a.switchBusy || a.activeID == "").Clicked() {
-				a.removeUserID = a.activeID
-				a.removeOpen = true
-			}
-		} else {
-			a.accountMenu(c)
+		// 帳號新增/移除（全帶一致——D28：側欄只管切換/重登，管理動作
+		// 在頂列；移除針對活躍帳號，Modal 二次確認沿 accountMenu 同路
+		// 徑）。
+		if ui.Button(c, "＋").Disabled(a.switchBusy || len(a.accounts) >= maxAccounts).Clicked() {
+			a.beginLoginVariant(loginModeAdd, "")
+		}
+		if ui.Button(c, "−").Disabled(a.switchBusy || a.activeID == "").Clicked() {
+			a.removeUserID = a.activeID
+			a.removeOpen = true
 		}
 		ui.Spacer(c)
 		// 搜尋（MyGO 內建 ui.SearchField——mygo-components 對照：含清除
@@ -186,76 +249,6 @@ func (a *app) homeToolbar(c *ui.Context, band int) {
 	})
 }
 
-// accountMenu 繪製左上帳號選單（ui.MenuButton，Task 14／D19）：各帳號
-// （accountLabel：失效者加「（失效）」，點擊失效者走「重新貼上 Cookie」
-// 入口、活躍者勾選無操作、其餘 switchTo）＋「新增帳號」（達 maxAccounts
-// 呈提示態——禁用＋上限文案 Subtitle）＋「移除 @xxx」（開 Modal 二次確
-// 認）。切換進行中（switchBusy）動作全數禁用（帳號選單 Task 8 接線：
-// switchBusy 期間禁再切換）。按鈕文字為活躍帳號（無則「帳號」），元件
-// Label「帳號選單」供輔助技術與測試定位。
-func (a *app) accountMenu(c *ui.Context) {
-	label := "帳號"
-	if acc, ok := a.accountByID(a.activeID); ok {
-		label = a.accountLabel(acc)
-	}
-	ui.MenuButton(c, label, func(m *ui.Menu) {
-		for _, acc := range a.accounts {
-			if m.Item(a.accountLabel(acc)).Checked(acc.UserID == a.activeID).Disabled(a.switchBusy).Chosen() {
-				if a.accInvalid[acc.UserID] {
-					a.openRelogin(acc.UserID) // 失效者：重新貼上 Cookie 入口
-				} else if acc.UserID != a.activeID {
-					a.switchTo(acc.UserID) // 背景切換（switchBusy 防再入）
-				}
-			}
-		}
-		m.Separator()
-		// 新增帳號：上限（maxAccounts=5，D19）呈提示態——禁用＋上限文
-		// 案（Subtitle；彈出式選單於標籤下第二行呈現）。
-		atCap := len(a.accounts) >= maxAccounts
-		add := m.Item("新增帳號").Disabled(a.switchBusy || atCap)
-		if atCap {
-			add = add.Subtitle(accountCapText)
-		}
-		if add.Chosen() {
-			a.beginLoginVariant(loginModeAdd, "")
-		}
-		m.Separator()
-		for _, acc := range a.accounts {
-			if m.Item("移除 @" + acc.ScreenName).Disabled(a.switchBusy).Chosen() {
-				a.removeUserID = acc.UserID
-				a.removeOpen = true // Modal 二次確認（removeModal）
-			}
-		}
-	}).Label("帳號選單")
-}
-
-// accountSelect 是 band 0 的帳號收合（ui.Select 下拉，D20）：選項為帳號
-// 標籤（失效者含「（失效）」）；選擇即分派——失效者走重登入口、其餘切換
-// （活躍者無操作）。切換進行中禁用（防再入造成呈現錯位——同步由
-// syncAccountSelection 於序列收斂時回寫）。
-func (a *app) accountSelect(c *ui.Context) {
-	if len(a.accounts) == 0 {
-		return
-	}
-	opts := make([]string, 0, len(a.accounts))
-	byLabel := make(map[string]string, len(a.accounts))
-	for _, acc := range a.accounts {
-		label := a.accountLabel(acc)
-		opts = append(opts, label)
-		byLabel[label] = acc.UserID
-	}
-	sel := ui.Select(c, &a.selectAcc, opts).Disabled(a.switchBusy)
-	if sel.Changed() {
-		if uid, ok := byLabel[a.selectAcc]; ok && uid != a.activeID {
-			if a.accInvalid[uid] {
-				a.openRelogin(uid)
-			} else {
-				a.switchTo(uid)
-			}
-		}
-	}
-}
-
 // openRelogin 進入失效帳號的「重新貼上 Cookie」入口（login view 變體，
 // D20/§8.5）：目標帳號預標（loginUserID），提交成功 → 更新該帳號 cookie
 // （覆蓋同鍵）→ 沿 switchTo 原地重試切換（submitLogin 的 relogin 分支）。
@@ -271,55 +264,6 @@ func (a *app) accountLabel(acc Account) string {
 		label += "（失效）"
 	}
 	return label
-}
-
-// homeSidebar 繪製左側欄（band ≥1，D20）：時間線 tabs（For You／
-// Following）＋帳號清單（失效者標記）。選擇記於 sideSel（ui.Sidebar 的
-// id 語義：帳號項 id=user_id、tabs 項 id=sideID*）；Changed 分派見
-// sidebarChosen。切換進行中帳號項禁用（switchBusy 禁再切換）。
-func (a *app) homeSidebar(c *ui.Context) {
-	sb := ui.Sidebar(c, &a.sideSel, func() {
-		ui.SidebarSection(c, "時間線", nil, func() {
-			ui.SidebarItem(c, sideIDForYou, nil, "For You")
-			ui.SidebarItem(c, sideIDFollowing, nil, "Following")
-		})
-		ui.SidebarSection(c, "帳號", nil, func() {
-			for _, acc := range a.accounts {
-				ui.SidebarItem(c, acc.UserID, nil, a.accountLabel(acc)).Disabled(a.switchBusy)
-			}
-		})
-	}).Width(sidebarWidth)
-	if sb.Changed() {
-		a.sidebarChosen(a.sideSel)
-	}
-}
-
-// sidebarChosen 分派側欄選擇：時間線項 → activeFeed（搜尋開啟時一併關
-// 閉——ephemeral 槽歸零，同 tabs 點回語義）；帳號項 → 失效者走重登入口、
-// 活躍者無操作、其餘 switchTo（背景切換，switchBusy 防再入）。失效者不
-// 可為選擇（其項點擊是動作而非切換）——呈現回歸活躍帳號。
-func (a *app) sidebarChosen(id string) {
-	switch id {
-	case sideIDForYou:
-		if a.searchOpen {
-			a.closeSearch()
-		}
-		a.activeFeed = feedForYou
-	case sideIDFollowing:
-		if a.searchOpen {
-			a.closeSearch()
-		}
-		a.activeFeed = feedFollowing
-	default:
-		if a.accInvalid[id] {
-			a.openRelogin(id)
-			a.syncAccountSelection()
-			return
-		}
-		if id != a.activeID {
-			a.switchTo(id)
-		}
-	}
 }
 
 // removeModal 繪製移除帳號的二次確認（ui.Modal）：確認走 removeConfirm
@@ -363,19 +307,17 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 		root = root.MaxWidth(640)
 	}
 	root.Children(func() {
-		if band == 0 {
-			// tabs（MyGO 內建 ui.Segmented——mygo-components 對照：鄰近
-			// 檢視切換的原生 widget，Lobe Segmented 不採；僅 band 0——
-			// band ≥1 由側欄承載）：點選即改寫 a.activeFeed——建構返回
-			// 前該框輸入已套用，其後整框即以切換後的槽渲染（下方讀取
-			// activeFeed 取得新選擇）。搜尋結果（feedSearch）不在 tabs：
-			// 越界選擇會被鉗回範圍，故 activeFeed 恆為 tab 索引、搜尋以
-			// searchOpen 另行標示——其間點回任一 tab（Changed）即關閉
-			//（已選 tab 的點擊不觸發 Changed——顯式返回入口見標題列）。
-			tabs := ui.Segmented(c, &a.activeFeed, "For You", "Following")
-			if wasSearch && tabs.Changed() {
-				a.closeSearch() // 點回 For You/Following：ephemeral 槽歸零
-			}
+		// tabs（MyGO 內建 ui.Tabs——mygo-components 對照：少數頁面成列
+		// 的原生 widget；D28 起各帶一致，取代側欄承載。Segmented 的
+		// Tester 點擊鏈未過驗證，故取 ui.Tabs——T8 釘測已證）：點選即
+		// 改寫 a.activeFeed——建構返回前該框輸入已套用，其後整框即以
+		// 切換後的槽渲染。搜尋結果（feedSearch）不在 tabs：越界選擇會
+		// 被鉗回範圍，故 activeFeed 恆為 tab 索引、搜尋以 searchOpen 另
+		// 行標示——其間點回任一 tab（Changed）即關閉（已選 tab 的點擊
+		// 不觸發 Changed——顯式返回入口見標題列）。
+		tabs := ui.Tabs(c, &a.activeFeed, "For You", "Following")
+		if wasSearch && tabs.Changed() {
+			a.closeSearch() // 點回 For You/Following：ephemeral 槽歸零
 		}
 		kind := a.activeFeed
 		f := a.feeds[kind]
