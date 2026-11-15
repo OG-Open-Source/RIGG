@@ -58,21 +58,14 @@ type timelineState struct {
 // homeEndText 是到底提示文案（契約 4）。
 const homeEndText = "已載入全部貼文"
 
-// sidebarWidth 是左側欄寬（DIP；MyGO Sidebar 的建議寬度）。
-const sidebarWidth = float32(220)
-
-// accountCapText 是「新增帳號」達帳號上限時的提示文案（D19：上限呈提示
-// 態，不解鎖路徑）。
-const accountCapText = "最多 5 個帳號——請先移除一個"
-
-// 側欄時間線 tabs 的項目 id（Sidebar 以 id 記選擇；帳號項以 user_id 為
-// id——前綴區隔，兩者不碰撞）。
-const (
-	sideIDForYou    = "feed-foryou"
-	sideIDFollowing = "feed-following"
-)
-
-// homeView 繪製 home 畫面（Task 14 四帶佈局，D20：頂列恆顯——左上帳號
+// homeView 繪製 home 畫面（D28 RWD 重構：頂列恆顯——帳號新增/移除與搜
+// 尋；Lobe DraggableSideNav 帳號側欄；無下方 bar）：
+//
+//   - 側欄（DraggableSideNav）：拖曳縮放（64–360 DIP）、收合成 rail；
+//     跨越 bpTablet 時自動收合/展開（D28）。
+//   - 內容區：tabs（Segmented→ui.Tabs）＋feed；展開檢視 band<2 全寬
+//     頁、band≥2 右欄並列；≥1200 內容 max-width 640 置中。
+//
 // 選單、右上搜尋框；無下方 bar）：
 //
 //   - band 0（<768）：單欄＋頂列收合（帳號 ui.Select 下拉），tabs 仍於
