@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,99 @@ var fetchImage = func(ctx context.Context, url string) ([]byte, error) {
 	return data, nil
 }
 
+// mediaUA 是媒體下載的瀏覽器 UA（D24）：X 的 video CDN 對系統媒體框架
+// 自帶 UA 的請求可能拒絕（需求方實測「動效影像無法播放」；P0' 以瀏覽器
+// UA 實證 200）——自有下載一律以此 UA 請求。
+const mediaUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+
+// gifMaxBytes／videoMaxBytes 是 D24 播放下載的上限：GIF 記憶體內解碼
+// （16 MiB）、video 暫存檔串流（256 MiB——最高位元率 mp4 的實際上界）。
+const (
+	gifMaxBytes   = 16 << 20
+	videoMaxBytes = 256 << 20
+)
+
+// mediaClient 是播放媒體下載的獨立客戶端（D24；與 thumbClient 分離——
+// 逾時與守門語義不同：影片大檔、無 image/* 閘）。
+var mediaClient = &http.Client{Timeout: 120 * time.Second}
+
+// fetchMediaBytes／fetchMediaToFile 是 D24 播放下載的接縫（var 形，同
+// fetchImage：call-time 解析、測試注入替身＋t.Cleanup 還原；正式路徑
+// 見下方實作）。
+var (
+	fetchMediaBytes = func(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+		return fetchMediaBytesDo(ctx, url, maxBytes)
+	}
+	fetchMediaToFile = func(ctx context.Context, url string, maxBytes int64) (string, error) {
+		return fetchMediaToFileDo(ctx, url, maxBytes)
+	}
+)
+
+// openMediaGet 以瀏覽器 UA 對媒體 CDN 發 GET（D24 共用面）：200 守門、
+// 呼叫端負責本體讀取與上限。
+func openMediaGet(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("媒體下載失敗：請求建構無效: %w", err)
+	}
+	req.Header.Set("User-Agent", mediaUA)
+	resp, err := mediaClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("媒體下載失敗: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("媒體下載失敗：HTTP %d", resp.StatusCode)
+	}
+	return resp, nil
+}
+
+// fetchMediaBytesDo 是 fetchMediaBytes 的正式路徑（D24 記憶體版媒體下
+// 載——GIF 純 Go 解碼用）：本體 ≤maxBytes（LimitReader 截讀＋超限錯誤，
+// 同 fetchImage 慣例）。
+func fetchMediaBytesDo(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+	resp, err := openMediaGet(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("媒體下載失敗: %w", err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("媒體下載失敗：檔案超過 %d MiB 上限", maxBytes>>20)
+	}
+	return data, nil
+}
+
+// fetchMediaToFileDo 是 fetchMediaToFile 的正式路徑（D24 暫存檔版媒體
+// 下載——video 用）：串流寫入 OS 暫存檔（≤maxBytes；超限即中止刪檔回
+// 錯）——不整讀入記憶體（RAM 預算 D26）。回傳暫存檔路徑，生命週期歸呼
+// 叫端（收合時隨 player 刪除）。
+func fetchMediaToFileDo(ctx context.Context, url string, maxBytes int64) (string, error) {
+	resp, err := openMediaGet(ctx, url)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	f, err := os.CreateTemp("", "x-media-*.mp4")
+	if err != nil {
+		return "", fmt.Errorf("媒體暫存檔建立失敗: %w", err)
+	}
+	path := f.Name()
+	n, err := io.Copy(f, io.LimitReader(resp.Body, maxBytes+1))
+	closeErr := f.Close()
+	if err != nil || closeErr != nil || n > maxBytes {
+		_ = os.Remove(path)
+		if n > maxBytes {
+			return "", fmt.Errorf("媒體下載失敗：檔案超過 %d MiB 上限", maxBytes>>20)
+		}
+		return "", fmt.Errorf("媒體下載失敗: %v", err)
+	}
+	return path, nil
+}
+
 // thumbEntry 是快取的一枚縮圖：src 為 DecodeImage 產物，bytes 為解碼後
 // 估算（w*h*4，put 依 ImageSize 計算；測試經 putSized 顯式注入）。
 type thumbEntry struct {
@@ -125,6 +219,12 @@ func (t *thumbStore) get(url string) (ui.ImageSource, bool) {
 func (t *thumbStore) put(url string, src ui.ImageSource) {
 	w, h := ui.ImageSize(src)
 	t.putSized(url, src, int(w)*int(h)*4)
+	// D26 RAM 槓桿：丟 CPU 像素、留 GPU 副本（Bitmap 保留原始 data，需
+	// 要時可重新上傳——ui.txt:784-795）。put 於主執行緒段（publish 回呼
+	// ），符合 ReleasePixels 的主執行緒約束；首幀繪製由保留 data 重上傳。
+	if b, ok := src.(*ui.Bitmap); ok {
+		b.ReleasePixels()
+	}
 }
 
 // putSized 以顯式位元組數插入——put 的位元組注入縫（正式路徑由 put 依

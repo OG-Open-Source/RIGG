@@ -19,6 +19,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"runtime/debug"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
@@ -29,11 +31,31 @@ import (
 // ui.Video（測試替身落空即走 Ready 前縮圖分支）。
 type player interface{ Close() }
 
-// openPlayer 是播放器建構接縫：正式＝video.OpenURL（mp4 URL 背景載入；
-// ErrUnsupported（Linux 無 GStreamer）等錯誤一律落媒體失敗 UX）；測試注
-// 入記錄替身。包級函式值形（同 fetchImage／newStore：call-time 解析、
+// openPlayer 是 video 播放器建構接縫（D24：正式＝video.Open(暫存檔路徑)
+// ——暫存檔由 fetchMediaToFile 以自有 client＋瀏覽器 UA 先行下載；測試注
+// 入記錄替身）。包級函式值形（同 fetchImage／newStore：call-time 解析、
 // t.Cleanup 還原）。
-var openPlayer = func(url string) (player, error) { return video.OpenURL(url) }
+var openPlayer = func(path string) (player, error) { return video.Open(path) }
+
+// newGifPlayer 是 GIF 播放器建構接縫（D24：正式＝ui.NewGIFDecoder（純 Go
+// 解碼）＋ui.NewVideoPlayer＋SetLoop——記憶體內、不依賴系統媒體框架）。
+var newGifPlayer = func(data []byte) (player, error) {
+	dec, err := ui.NewGIFDecoder(data)
+	if err != nil {
+		return nil, err
+	}
+	pl, err := ui.NewVideoPlayer(dec)
+	if err != nil {
+		return nil, err
+	}
+	pl.SetLoop(true)
+	return pl, nil
+}
+
+// goClose 是播放器非同步關閉的執行接縫（P4：正式＝go f()——Media
+// Foundation 收斂可能秒級，同步 Close 卡 UI；測試注入同步執行使 Close
+// 計數斷言確定性）。
+var goClose = func(f func()) { go f() }
 
 // detailPanelWidth 是右欄並列形態的展開檢視欄寬（DIP；band ≥2 的右欄）。
 const detailPanelWidth = float32(380)
@@ -48,10 +70,12 @@ const detailPanelWidth = float32(380)
 // 貼合、播放器未 Ready 時的縮圖／佔位同框，版面不隨載入跳動。
 const detailMediaHeight = float32(260)
 
-// detailCloseText／detailLoadingText 是展開檢視的收合按鈕與載入佔位文案。
+// detailCloseText／detailLoadingText／videoPlayText 是展開檢視的收合按
+// 鈕、載入佔位與 video 懶建立播放鈕文案（D24）。
 const (
 	detailCloseText   = "收合"
 	detailLoadingText = "載入中…"
+	videoPlayText     = "播放"
 )
 
 // detailMedia 是展開檢視的媒體載入狀態（openDetail 起手歸零，detailView
@@ -64,11 +88,13 @@ type detailMedia struct {
 }
 
 // openDetail 開啟貼文的展開檢視（UI 執行緒：列點擊或後續入口）。單一活
-// 躍規則（§8.6）：先 closePlayer() 關舊播放器，再建新狀態。Kind 分派：
-// photo 派發大圖下載（會話子樹；完成經 publish 主執行緒解碼，世代＋
-// detail 指標雙檢查，T6 形）；video/gif 當場建播放器（openPlayer，mp4
-// 背景載入——gif 亦走 mp4，D13；失敗記 playErr 走媒體失敗 UX，不含憑
-// 證語義）。
+// 躍規則（§8.6）：先 closePlayer() 關舊播放器，再建新狀態。Kind 分派
+// （D24 修訂，2026-11-15）：photo 派發大圖下載（會話子樹；完成後解碼，
+// 世代＋detail 指標雙檢查，T6 形）；gif 自動下載 bytes 純 Go 解碼播放
+// （NewGIFDecoder——mp4 variant 交系統框架在實機無法播放，D13 修訂）；
+// video 懶建立——僅呈海報＋播放鈕，點擊才下載暫存檔並建播放器（系統框
+// 架初始化是展開卡頓與幻影 RAM 的來源，P4；D24 的自有下載繞過 CDN 對
+// 系統框架 UA 的拒絕）。失敗記 playErr 走媒體失敗 UX，不含憑證語義。
 func (a *app) openDetail(p post) {
 	a.closePlayer()
 	a.dmedia = detailMedia{}
@@ -80,31 +106,40 @@ func (a *app) openDetail(p post) {
 	switch m.Kind {
 	case "photo":
 		a.fetchDetailImage(m.URL)
-	case "video", "gif":
-		pl, err := openPlayer(m.URL)
-		if err != nil {
-			a.dmedia.playErr = err
-			return
-		}
-		a.player = pl
+	case "gif":
+		a.startGifPlayback(m.URL)
+	case "video":
+		// 懶建立：播放器在使用者點擊播放時才建（startVideoPlayback）。
 	}
 }
 
 // closeDetail 離開展開檢視（收合按鈕／切換帳號墓碑）：Close＋nil＋媒體
-// 狀態歸零（§8.6）。冪等：無播放器／detail 時不做事。
+// 狀態歸零（§8.6）。冪等：無播放器／detail 時不做事。P5（D26）：
+// FreeOSMemory 回收 RSS 高水位（展開期間的大圖解碼與播放器緩衝）。
 func (a *app) closeDetail() {
 	a.closePlayer()
 	a.detail = nil
 	a.dmedia = detailMedia{}
+	debug.FreeOSMemory()
 }
 
-// closePlayer 釋放單一活躍播放器（§8.6）：nil 時不做事（冪等）。
+// closePlayer 釋放單一活躍播放器（§8.6）：nil 時不做事（冪等）。P4
+// （D26 前奏）：Close 移背景 goroutine——Media Foundation 收斂可能秒級，
+// 同步呼叫卡 UI（需求方實測「展開到收合奇慢」的元兇之一）；暫存檔隨
+// Close 刪除（D24：playerPath 的生命週期終點）。主執行緒僅做狀態替換。
 func (a *app) closePlayer() {
 	if a.player == nil {
 		return
 	}
-	a.player.Close()
+	pl, path := a.player, a.playerPath
 	a.player = nil
+	a.playerPath = ""
+	goClose(func() {
+		pl.Close()
+		if path != "" {
+			_ = os.Remove(path)
+		}
+	})
 }
 
 // fetchDetailImage 派發展開檢視大圖下載（fetchImage 接縫直取 name=large
@@ -118,22 +153,109 @@ func (a *app) fetchDetailImage(url string) {
 	d, gen := a.detail, a.gen
 	a.goSession(func(ctx context.Context) {
 		data, err := fetchImage(ctx, url)
+		var src ui.ImageSource
+		var derr error
+		if err == nil {
+			// P4：解碼移出主執行緒（2048px 解碼數百 ms 會卡幀）——
+			// Bitmap 為資料持有者非 Element，背景建構同 video.Open 的
+			// 背景載入語義。
+			src, derr = ui.DecodeImage(data)
+		}
 		a.publish(func() {
 			if gen != a.gen || a.detail != d {
 				return // 世代過期或展開檢視已收合／換帖：丟棄
 			}
-			if err != nil {
-				a.dmedia.imgFail = true
-				return
-			}
-			src, derr := ui.DecodeImage(data)
-			if derr != nil {
+			if err != nil || derr != nil {
 				a.dmedia.imgFail = true
 				return
 			}
 			a.dmedia.img = src
+			// D26 RAM 槓桿：大圖同縮圖——丟 CPU 像素留 GPU 副本（首幀
+			// 繪製由保留 data 重上傳）。
+			if b, ok := src.(*ui.Bitmap); ok {
+				b.ReleasePixels()
+			}
 		})
 	})
+}
+
+// startGifPlayback 是 GIF 的 D24 播放路徑：下載 bytes（自有 client＋瀏
+// 覽器 UA，≤gifMaxBytes）→ ui.NewGIFDecoder（純 Go 解碼、記憶體內，不
+// 依賴系統媒體框架）→ ui.NewVideoPlayer（SetLoop 循環）→ a.player。世
+// 代＋detail 指標雙檢查同 fetchDetailImage。
+func (a *app) startGifPlayback(url string) {
+	d, gen := a.detail, a.gen
+	a.playerLoading = true
+	a.goSession(func(ctx context.Context) {
+		data, err := fetchMediaBytes(ctx, url, gifMaxBytes)
+		var pl player
+		var perr error
+		if err == nil {
+			pl, perr = newGifPlayer(data)
+		}
+		a.publish(func() {
+			a.playerLoading = false
+			if gen != a.gen || a.detail != d {
+				if pl != nil {
+					pl.Close()
+				}
+				return // 世代過期或展開檢視已收合／換帖：丟棄
+			}
+			if err != nil || perr != nil {
+				a.dmedia.playErr = mediaErr(err, perr)
+				return
+			}
+			a.player = pl
+		})
+	})
+}
+
+// startVideoPlayback 是 video 的 D24 播放路徑（懶建立——使用者點擊播放
+// 才走）：下載 mp4 至暫存檔（自有 client＋瀏覽器 UA，串流不整讀）→
+// video.Open(path) → a.player（路徑留存 playerPath，收合時隨 player 刪
+// 除）。世代＋detail 指標雙檢查同 fetchDetailImage；過期結果的暫存檔
+// 即刻刪除。
+func (a *app) startVideoPlayback(url string) {
+	d, gen := a.detail, a.gen
+	a.playerLoading = true
+	a.goSession(func(ctx context.Context) {
+		path, err := fetchMediaToFile(ctx, url, videoMaxBytes)
+		var pl player
+		var perr error
+		if err == nil {
+			pl, perr = openPlayer(path)
+			if perr != nil {
+				_ = os.Remove(path)
+			}
+		}
+		a.publish(func() {
+			a.playerLoading = false
+			if gen != a.gen || a.detail != d {
+				if pl != nil {
+					pl.Close()
+				}
+				if path != "" {
+					_ = os.Remove(path)
+				}
+				return
+			}
+			if err != nil || perr != nil {
+				a.dmedia.playErr = mediaErr(err, perr)
+				return
+			}
+			a.player = pl
+			a.playerPath = path
+		})
+	})
+}
+
+// mediaErr 取兩錯誤中的非 nil 者（D24 下載／開啟雙段的錯誤合流；皆 nil
+// 時不應被呼叫——防禦回 nil）。
+func mediaErr(err, perr error) error {
+	if err != nil {
+		return err
+	}
+	return perr
 }
 
 // detailView 建構展開檢視（band ≥2 右欄並列形態本體）：標題列（作者＋
@@ -160,11 +282,11 @@ func (a *app) detailView(c *ui.Context, p post) {
 	})
 }
 
-// detailMediaView 是展開檢視的媒體區（Kind 分派，§8.6）：photo → 大圖
-// （ui.Image；未載入 → 佔位、失敗 → msgMedia＋外開）；video/gif →
-// ui.Video（openPlayer 失敗 → 失敗 UX；Ready 前呈媒體縮圖——thumbLRU
-// 命中即縮圖、未命中佔位，不派發縮圖下載：展開頁的載入對象是大圖／播
-// 放器，縮圖管線屬列表框，見 media.go）。
+// detailMediaView 是展開檢視的媒體區（Kind 分派，§8.6＋D24 狀態機）：
+// photo → 大圖（ui.Image；未載入 → 佔位、失敗 → msgMedia＋外開）；video
+// → 懶建立狀態機（海報＋播放鈕 → 下載暫存檔中 → ui.Video；D24）；gif →
+// 自動播放（openDetail 已派發下載解碼；完成前佔位）。媒體縮圖沿 thumbLRU
+// 命中呈現（不派發縮圖下載：展開頁的載入對象是大圖／播放器）。
 func (a *app) detailMediaView(c *ui.Context, p post) {
 	if len(p.Media) == 0 {
 		return
@@ -182,27 +304,65 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 		default:
 			a.detailPlaceholder(c)
 		}
-	case "video", "gif":
-		if a.dmedia.playErr != nil || a.player == nil {
+	case "video":
+		switch {
+		case a.dmedia.playErr != nil:
 			a.mediaFailView(c, p)
-			return
+		case a.player != nil:
+			a.playerView(c, m.ThumbURL)
+		case a.playerLoading:
+			a.detailPlaceholder(c) // 下載暫存檔中（D24）
+		default:
+			a.videoPosterView(c, m.ThumbURL, m.URL) // 懶建立：海報＋播放鈕
 		}
-		if vp, ok := a.player.(*ui.VideoPlayer); ok && vp.Ready() {
+	case "gif":
+		switch {
+		case a.dmedia.playErr != nil:
+			a.mediaFailView(c, p)
+		case a.player != nil:
+			a.playerView(c, m.ThumbURL)
+		default:
+			a.detailPlaceholder(c) // 自動下載／解碼中（openDetail 已派發，D24）
+		}
+	}
+}
+
+// playerView 渲染活躍播放器（Ready → ui.Video；未 Ready → 縮圖命中或佔
+// 位——thumbLRU 唯讀、不派發下載，同既有語義）。
+func (a *app) playerView(c *ui.Context, thumbURL string) {
+	if vp, ok := a.player.(*ui.VideoPlayer); ok && vp.Ready() {
+		a.detailMediaBox(c, func() {
+			ui.Video(c, vp).Fill().Fit(ui.Contain)
+		})
+		return
+	}
+	if thumbURL != "" {
+		if src, ok := thumbLRU.get(thumbURL); ok {
 			a.detailMediaBox(c, func() {
-				ui.Video(c, vp).Fill().Fit(ui.Contain)
+				ui.Image(c, src).Fill().Fit(ui.Contain)
 			})
 			return
 		}
-		// Ready 前：媒體縮圖（thumbLRU 命中；未命中佔位）。
-		if m.ThumbURL != "" {
-			if src, ok := thumbLRU.get(m.ThumbURL); ok {
-				a.detailMediaBox(c, func() {
-					ui.Image(c, src).Fill().Fit(ui.Contain)
-				})
+	}
+	a.detailPlaceholder(c)
+}
+
+// videoPosterView 是 video 的懶建立海報（D24）：縮圖命中即呈、未命中佔
+// 位；播放鈕點擊才 startVideoPlayback（下載暫存檔＋建播放器——系統框架
+// 初始化不發生在展開瞬間，P4）。
+func (a *app) videoPosterView(c *ui.Context, thumbURL, url string) {
+	a.detailMediaBox(c, func() {
+		if thumbURL != "" {
+			if src, ok := thumbLRU.get(thumbURL); ok {
+				ui.Image(c, src).Fill().Fit(ui.Contain)
 				return
 			}
 		}
-		a.detailPlaceholder(c)
+		t := c.Theme()
+		ui.Text(c, detailLoadingText).TextColor(t.TextMuted)
+	})
+	if ui.PrimaryButton(c, "播放").Clicked() {
+		a.startVideoPlayback(url)
 	}
 }
 

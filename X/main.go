@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"slices"
 
 	"github.com/egoist/mygo"
@@ -132,11 +133,15 @@ type app struct {
 	// —— 展開檢視（Task 13；設計 §8.6 播放器生命週期）——
 	// detail 是當前展開的貼文（nil＝無）；player 是單一活躍播放器
 	//（nil＝無——開新帖先 Close 舊的，收合／切換帳號經 closeDetail 釋
-	// 放）；dmedia 是大圖／播放器錯誤的載入狀態（detailView 消費，
-	// openDetail 起手歸零）。行為面見 view_detail.go。
-	detail *post
-	player player
-	dmedia detailMedia
+	// 放）；playerPath 是 D24 video 暫存檔路徑（收合時隨 player 刪除）；
+	// playerLoading 是 D24 的播放媒體下載中旗標（video 懶建立／gif 自動
+	// 播放的過渡態）；dmedia 是大圖／播放器錯誤的載入狀態（detailView
+	// 消費，openDetail 起手歸零）。行為面見 view_detail.go。
+	detail        *post
+	player        player
+	playerPath    string
+	playerLoading bool
+	dmedia        detailMedia
 
 	// —— 帳號選單（Task 14；D20 頂列佈局）——
 	// activeID 是活躍帳號 user_id 的記憶體快照（選單勾選、側欄選擇與
@@ -476,6 +481,7 @@ func (a *app) runSwitch(ctx context.Context, userID string, snap switchSnapshot)
 		a.feeds = [3]*timelineState{{}, {}, {}}
 		a.activeFeed = feedForYou
 		a.searchOpen = false
+		debug.FreeOSMemory()   // D26：切換回收 RSS 高水位（展開期大圖／播放器緩衝）
 		a.loadFeed(feedForYou) // 自動載入 For You 首頁
 	})
 }
@@ -563,17 +569,41 @@ func (a *app) removeConfirm() {
 	})
 }
 
-// warmup 憑證預熱（§8.5 lazy 預熱）：啟動後背景執行（冪等，可重跑）——
-// 先遷移 v1 舊鍵（§8.3：索引不存在且舊鍵有值；migrate.go 載明的啟動接線
-// 點），再 loadAccounts 讀索引＋全部帳號 secret 進 a.accounts（記憶體快
-// 照；帳號選單 Task 8 消費）。遷移／讀取失敗記 AppState.Err（setErr，同
-// persistLogin 語義；呈現面 Task 8 接線），a.accounts 維持既有值。
+// warmup 憑證預熱（§8.5 lazy 預熱＋D23 啟動自動還原）：啟動後背景執行
+// （冪等，可重跑）——先遷移 v1 舊鍵（§8.3：索引不存在且舊鍵有值；
+// migrate.go 載明的啟動接線點），再 loadAccounts 讀索引＋全部帳號 secret
+// 進 a.accounts（記憶體快照；帳號選單 Task 8 消費）。遷移／讀取失敗記
+// AppState.Err（setErr，同 persistLogin 語義；呈現面 Task 8 接線），
+// a.accounts 維持既有值。D23：loadAccounts 成功且索引 Current 指向存在
+// 帳號時，以 newSessionFor（無網路）還原會話並直接進 home——cookie 失效
+// 由後續自然使用暴露（既有 credential 錯誤 UX），不在啟動時阻塞重驗。
 func (a *app) warmup() {
 	ctx := context.Background()
 	if err := migrateLegacyStore(ctx, a.proxy); err != nil {
 		a.state.setErr(err)
 	}
 	accs, idx, err := loadAccounts(ctx)
+	var restore *Account
+	var restoredSess *engineSession
+	if err == nil && idx.Current != "" {
+		for i := range accs {
+			if accs[i].UserID == idx.Current {
+				restore = &accs[i]
+				break
+			}
+		}
+	}
+	if restore != nil {
+		// D23 還原會話（背景執行緒安全：newSessionFor 無網路 I/O，
+		// transport 建構即註冊；proxy 已於派發前寫入）。
+		sess, serr := newSessionFor(*restore, a.proxy)
+		if serr != nil {
+			a.state.setErr(serr)
+			restore = nil
+		} else {
+			restoredSess = sess
+		}
+	}
 	a.publish(func() {
 		if err == nil {
 			a.accounts = accs
@@ -583,6 +613,17 @@ func (a *app) warmup() {
 				a.activeID = idx.Current
 				a.syncAccountSelection()
 			}
+		}
+		// D23 啟動自動還原：會話就緒且使用者尚在 login（未進行任何
+		// login 變體流程）→ 直接進 home。切換進行中或已在 home 不介入。
+		if restore != nil && restoredSess != nil && a.sess == nil &&
+			a.loginMode == loginModeNone && !a.switchBusy {
+			a.sess = restoredSess
+			a.auth = restoredSess.auth
+			a.activeStore = newAccountCookieStore(restore.UserID)
+			a.activeID = restore.UserID
+			a.gen++
+			a.syncAccountSelection()
 		}
 	})
 	if err != nil {

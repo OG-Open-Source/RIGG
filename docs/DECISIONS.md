@@ -663,3 +663,50 @@ v1.0.13-utls）。
     detailView，feed 於展開期間不可達，收合按鈕即「離開展開檢視」出口
     （§8.6 播放器生命週期不變；跨帶縮放不收合、檢視延續）。實作落點：
     `X/view_home.go`（homeView 窄帶分流＋列點擊去閘）。
+
+### D23 啟動自動還原活躍帳號（需求方回報「重開=重新登入」，2026-11-15）
+
+* **裁決**：warmup（遷移→loadAccounts）完成後，若索引 `Current` 指向
+  存在的帳號，即以 `newSessionFor(acc, proxy)`（無網路）還原會話並直接
+  進 home——不再每次啟動落 login。TTL 憑證快取標記 fresh（避免立即重
+  驗）；cookie 失效由後續自然使用暴露（既有 credential 錯誤 UX）。v1
+  遺留的「自動登入路徑未接線」TODO 於本輪兌現。
+* **依據**：需求方實測回報（帳號持久性不存在）；§8.4/§8.5 設計意圖本
+  含啟動還原，屬未接線缺陷而非新功能。
+* **配套**：#7「不能新增」高概率為測試期間累積 5 帳號觸 D19 上限（設
+  計行為）——還原後可自選單切換/移除；上限邏輯不變。
+
+### D24 媒體播放改自有下載＋純 Go GIF 解碼（D13 修訂，需求方回報「動效影像無法播放」，2026-11-15）
+
+* **裁決**：(a) **GIF 改 `ui.NewGIFDecoder(data)`＋`ui.NewVideoPlayer`**
+  純 Go 解碼、記憶體內播放——不再走 mp4 variant 交系統框架；GIF bytes
+  經自有 client 下載（≤8 MiB 閘）。(b) **video 改自有 client 下載
+  （瀏覽器 UA）→ `PathUserData` 暫存檔 → `video.Open(path)`**——繞過
+  X CDN 對系統 Media Foundation 自帶 UA 的可能拒絕（P0' 以瀏覽器 UA
+  實證 200；用戶實測系統框架直接抓 URL 失敗，符合 UA 過濾假說）；收合
+  即刪暫存。(c) m3u8 維持不採。
+* **依據**：需求方實測「動效影像會無法播放，推測是 API 問題」；P0'
+  （D22）與實測的差異即 UA 面。
+* **D13 修訂記錄**：mp4 variant 直接餵 `video.OpenURL` 的原案廢棄；
+  「GIF 走 mp4 variant」子句由純 Go GIF 解碼取代（D13 的「與 video 同
+  一解析路徑省一套解碼器」利益讓位給實際可播性）。
+
+### D25 AtEnd 自動填補上限（需求方回報「全螢幕自動往下刷新」，2026-11-15）
+
+* **裁決**：`AtEnd` 在 MyGO 語義下含「內容未滿一屏」（ui.txt:5937-5938）
+  ——全螢幕 tall window 逐框連環翻頁的根因。修法：`Visible().first==0
+  && AtEnd`（內容未滿屏）→ 自動補載**上限 2 頁**後停（使列表可捲即止）；
+  `first>0 && AtEnd`（真捲到底）→ 正常翻頁；`!AtEnd` 歸零計數。
+* **依據**：需求方實測；MyGO ListState 無捲動事件鉤，`Visible()` 為唯
+  一可判面。
+
+### D26 RAM 槓桿啟用（D14「量測後決定」兌現——需求方實測 150 MiB 起跳，2026-11-15）
+
+* **裁決**：(a) 縮圖與 detail 大圖顯示後呼叫 `Bitmap.ReleasePixels()`
+  （丟 CPU 像素留 GPU 副本——T12 預留的量測槓桿）；(b) `closeDetail`
+  與帳號切換時 `debug.FreeOSMemory()`（回收 RSS 高水位）；(c) feed
+  posts 上限 600 截最舊（防無界成長；seen 既有 500 上限不變）。
+* **依據**：需求方實測 RAM 翻倍至 150 MiB 起跳；D14 預留的三項槓桿中
+  兩項落地（磁碟快取維持不採）。
+* **待驗**：需求方以同法複測三場景（閒置/100 帖含媒體/播放中）——
+  L2 RAM 驗收閘門。

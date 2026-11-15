@@ -29,16 +29,26 @@ const (
 // 保留最近（丟最舊），避免無界成長。
 const seenCap = 500
 
+// feedAutoFillMax 是 D25 的每槽自動補載上限：AtEnd 且內容未滿一屏
+// （Visible().first==0，全螢幕 tall window 情境）時最多自動連載的頁數
+// ——使列表可捲即止，之後需使用者真捲動（first>0）才續翻。
+const feedAutoFillMax = 2
+
+// postsCap 是單槽 posts 的 D26 上限：長捲動的無界成長截尾保留最近
+// （ListState.Key 以 work_id 為識別，列位移不破壞捲動語義）。
+const postsCap = 600
+
 // timelineState 是單一 feed 的隔離狀態（Task 8）：posts／cursor／seen／
 // end／busy／err／list 皆屬該 feed——切換 tab 不互相污染。
 type timelineState struct {
-	posts  []post
-	cursor string
-	seen   []string // 上限 seenCap=500：append 後 len>500 → 截尾保留最近（丟最舊）
-	end    bool
-	busy   bool
-	err    error
-	list   ui.ListState
+	posts    []post
+	cursor   string
+	seen     []string // 上限 seenCap=500：append 後 len>500 → 截尾保留最近（丟最舊）
+	end      bool
+	busy     bool
+	err      error
+	list     ui.ListState
+	autoFill int // D25：未滿屏 AtEnd 的自動補載計數（feedAutoFillMax 封頂；!AtEnd 歸零）
 }
 
 // homeEndText 是到底提示文案（契約 4）。
@@ -354,9 +364,22 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 		// 翻頁觸發：先於列表建構檢查（AtEnd 反映上一框的版面；首載以
 		// posts 為空表達）。loadFeed 自帶防抖與終止條件（busy／end／
 		// err），三槽同徑（含 feedSearch 的游標接續頁，F3；搜尋首頁
-		// 起跑走 submitSearch）。
-		if len(f.posts) == 0 || f.list.AtEnd() {
+		// 起跑走 submitSearch）。D25：AtEnd 含「內容未滿一屏」——全螢
+		// 幕 tall window 逐框連環翻頁的根因。分派：first>0（真捲到底）
+		// 正常翻；first==0（未滿屏）僅自動補載 feedAutoFillMax 頁使列
+		// 表可捲即止；!AtEnd 歸零計數（使用者捲動／內容超窗後重置）。
+		if len(f.posts) == 0 {
 			a.loadFeed(kind)
+		} else if f.list.AtEnd() {
+			if first, _ := f.list.Visible(); first > 0 {
+				f.autoFill = 0
+				a.loadFeed(kind)
+			} else if f.autoFill < feedAutoFillMax {
+				f.autoFill++
+				a.loadFeed(kind)
+			}
+		} else {
+			f.autoFill = 0
 		}
 		ui.Row(c).Padding(12, 16).Gap(8).AlignItems(ui.Center).Children(func() {
 			title := "時間線"
@@ -545,5 +568,11 @@ func (f *timelineState) mergePosts(res *timelineResult) {
 		// 截尾：保留最近的 seenCap 筆（丟最舊）；複製出新底層陣列，與
 		// 派發時捕捉的舊 seen 切片脫鉤（背景 goroutine 仍持舊切片）。
 		f.seen = append([]string(nil), f.seen[len(f.seen)-seenCap:]...)
+	}
+	// D26 RAM 槓桿：posts 上限 postsCap——長捲動的無界成長截尾保留最近
+	// （ListState.Key 以 work_id 為識別，列位移不破壞捲動語義；Media
+	// 切片隨帖釋放）。
+	if len(f.posts) > postsCap {
+		f.posts = append([]post(nil), f.posts[len(f.posts)-postsCap:]...)
 	}
 }
