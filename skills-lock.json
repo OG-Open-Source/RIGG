@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/mygo-components/SKILL.md",
       "computedHash": "8bfb4c742b5c4b4deafe32d3a7bec53cc0521be64c8ae9196683fbd60e977be5"
+    },
+    "mygoui-components": {
+      "source": "Cyenoch/mygoui",
+      "sourceType": "github",
+      "skillPath": "skills/mygoui-components/SKILL.md",
+      "computedHash": "284358804580f3cc93daff7daeaf9c1e135bb617bc16fa097756cbb2229e54d5"
     }
   }
 }

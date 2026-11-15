@@ -26,8 +26,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
-	"github.com/lobehub/lobe-mygo/pkg/display"
-	"github.com/lobehub/lobe-mygo/pkg/feedback"
+	lobedisplay "github.com/lobehub/lobe-mygo/pkg/display"
+	shaddisplay "github.com/pylogmon/shadcn-ui-mygo/pkg/display"
 )
 
 // player 是播放器生命週期的測試 seam 最小面（*ui.VideoPlayer 滿足之）：
@@ -315,10 +315,10 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 		switch {
 		case a.dmedia.img != nil:
 			// Lobe display.Image（mygo-components 對照：MyGO ui.Image 無
-			// 預覽檢視器——真缺口）：圓角框＋點擊飛出預覽（滾輪縮放、拖
-			// 曳平移、Escape 關閉）。自然比例（寬受限於容器、高隨比例）
-			// ——不再固定高 letterbox。
-			display.Image(c, a.dmedia.img, display.ImageProps{
+			// 預覽檢視器、shadcn 亦無——D31 記錄的唯一 Lobe 存留者）：
+			// 圓角框＋點擊飛出預覽（滾輪縮放、拖曳平移、Escape 關閉）。
+			// 自然比例（寬受限於容器、高隨比例）——不再固定高 letterbox。
+			lobedisplay.Image(c, a.dmedia.img, lobedisplay.ImageProps{
 				Contain: true,
 				Alt:     Sanitize("@" + p.ScreenName + " 的貼文圖片"),
 			})
@@ -440,19 +440,17 @@ func (a *app) mediaFailView(c *ui.Context, p post) {
 }
 
 // mediaFailDetail 是帶診斷描述的媒體失敗 UX（v1.1.3 診斷浮面）：desc 非
-// 空 → Alert Description 呈現真實錯誤（app 層錯誤不含憑證材料），使使
-// 用者回報即可定位下載／解碼／系統框架哪一層。
+// 空 → shadcn Alert Description 呈現真實錯誤（app 層錯誤不含憑證材
+// 料），使使用者回報即可定位下載／解碼／系統框架哪一層。
 func (a *app) mediaFailDetail(c *ui.Context, desc string) {
-	t := c.Theme()
 	p := post{}
 	if a.detail != nil {
 		p = *a.detail
 	}
-	_ = t
-	feedback.Alert(c, msgMedia, feedback.AlertProps{
-		Type:        feedback.Warning,
+	shaddisplay.Alert(c, shaddisplay.AlertProps{
+		Title:       msgMedia,
 		Description: desc,
-		Selectable:  true,
+		Destructive: true,
 	})
 	if p.WorkURL != "" {
 		ui.Link(c, msgOpenExternal, Sanitize(p.WorkURL))

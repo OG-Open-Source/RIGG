@@ -143,14 +143,14 @@ type app struct {
 	playerLoading bool
 	dmedia        detailMedia
 
-	// —— D28 RWD（Lobe DraggableSideNav）——
-	// navWidth／navExpanded 是帳號側欄的持續狀態（拖曳縮放與收合成
-	// 64 DIP rail 由 Lobe 元件持有，此處僅存指標目標）；prevWidth 是
-	// 上一幀窗寬（跨越 bpTablet 時自動收合/展開，邊界介入不與拖曳對
-	// 抗）。
-	navWidth    float32
-	navExpanded bool
-	prevWidth   float32
+	// —— D28/D31 RWD（shadcn navigation.Sidebar）——
+	// navSel 是側欄激活鍵（帳號 user_id；失效者帶 relogin: 前綴，激活
+	// ＝重登入口）；navCollapsed 是收合態（shadcn Collapsed 指標目標）；
+	// prevWidth 是上一幀窗寬（跨越 bpTablet 時自動收合/展開，邊界介入
+	// 不與使用者收合對抗）。
+	navSel       string
+	navCollapsed bool
+	prevWidth    float32
 
 	// —— 帳號選單（Task 14；D20 頂列佈局）——
 	// activeID 是活躍帳號 user_id 的記憶體快照（選單勾選、側欄選擇與

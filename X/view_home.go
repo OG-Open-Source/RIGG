@@ -14,12 +14,13 @@ package main
 
 import (
 	"context"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/lobehub/lobe-mygo/pkg/display"
-	"github.com/lobehub/lobe-mygo/pkg/feedback"
-	"github.com/lobehub/lobe-mygo/pkg/layout"
-	"github.com/lobehub/lobe-mygo/pkg/theme"
+	shadcontrol "github.com/pylogmon/shadcn-ui-mygo/pkg/control"
+	shaddisplay "github.com/pylogmon/shadcn-ui-mygo/pkg/display"
+	shadnavigation "github.com/pylogmon/shadcn-ui-mygo/pkg/navigation"
+	shadtheme "github.com/pylogmon/shadcn-ui-mygo/pkg/theme"
 )
 
 // feed 槽索引（Task 8）：activeFeed 用裸 int＋常數（ui.Tabs 需要 *int）。
@@ -89,17 +90,17 @@ const homeEndText = "已載入全部貼文"
 // 統一呈於 feed 標題列（各帶一致）。帶轉換跨越 768 時自動收合/展開側
 // 欄（僅邊界介入，不與使用者的拖曳對抗）。
 func (a *app) homeView(c *ui.Context) {
-	theme.Apply(c) // Lobe MyGo 設計語言（淺色/深色隨系統；TokensOf 取對應 token）
+	shadtheme.Apply(c) // shadcn 設計語言（D31：Lobe 退役；OKLCH token、淺/深隨系統）
 	w, _ := c.Size()
 	band := a.layoutBand(w)
-	// D28：跨越窄帶邊界時自動收合/展開側欄（初始 prevWidth 為 0——首幀
-	// 依寬度設定；之後僅邊界跨越時介入）。
+	// D28/D31：跨越窄帶邊界時自動收合/展開側欄（僅邊界介入，不與使用
+	// 者的收合對抗）。
 	if a.prevWidth >= bpTablet && w < bpTablet {
-		a.navExpanded = false
+		a.navCollapsed = true
 	} else if a.prevWidth < bpTablet && w >= bpTablet && a.prevWidth > 0 {
-		a.navExpanded = true
+		a.navCollapsed = false
 	} else if a.prevWidth == 0 {
-		a.navExpanded = w >= bpTablet
+		a.navCollapsed = w < bpTablet
 	}
 	a.prevWidth = w
 	// 選單一律以主題彈出呈現（PopoverMenus）：與自繪 UI 同貌，內窗可檢
@@ -112,25 +113,30 @@ func (a *app) homeView(c *ui.Context) {
 		if a.switchErr != nil {
 			// 帳號選單錯誤區（switchErr，Task 8 接線由本任務的選單落
 			// 地）：最近一次切換失敗的文案；成功切換即清除（runSwitch）。
-			// 既有內容原樣（REQ-LOG-042/043 同形：僅顯示）。Lobe Alert
-			//（Error 染色；Selectable 供複製細節）。
-			feedback.Alert(c, Sanitize(errorText(a.switchErr)), feedback.AlertProps{
-				Type:       feedback.Error,
-				Selectable: true,
+			// 既有內容原樣（REQ-LOG-042/043 同形：僅顯示）。shadcn Alert
+			//（Destructive 染色）。
+			shaddisplay.Alert(c, shaddisplay.AlertProps{
+				Title:       Sanitize(errorText(a.switchErr)),
+				Destructive: true,
 			})
 		}
 		ui.Row(c).Fill().Children(func() {
-			// D28：帳號側欄（DraggableSideNav）——展開為帳號清單（頭像＋
-			// 標籤＋失效標記，點擊切換/重登），收合成頭像 rail。
-			layout.DraggableSideNav(c, &a.navWidth, &a.navExpanded,
-				layout.DraggableSideNavProps{MinWidth: 64, MaxWidth: 360},
-				func(nav layout.SideNavState) {
-					if nav.Expanded {
-						a.accountNavList(c)
-					} else {
-						a.accountNavRail(c)
-					}
-				})
+			// D31：帳號側欄（shadcn navigation.Sidebar，靜態列）——
+			// 各帳號一項（失效者標記＋relogin 前綴鍵），激活寫回 navSel。
+			prev := a.navSel
+			shadnavigation.Sidebar(c, &a.navSel, shadnavigation.SidebarProps{
+				Items:     a.navItems(),
+				Label:     "帳號",
+				Collapsed: &a.navCollapsed,
+			}, nil)
+			if a.navSel != prev && a.navSel != "" {
+				switch {
+				case strings.HasPrefix(a.navSel, reloginKeyPrefix):
+					a.openRelogin(strings.TrimPrefix(a.navSel, reloginKeyPrefix))
+				case a.navSel != a.activeID:
+					a.switchTo(a.navSel)
+				}
+			}
 			// 內容區：展開檢視（窄帶全寬頁／寬帶右欄並列）＋feed。
 			if band < 2 && a.detail != nil {
 				// 窄帶全寬展開檢視（F2）：feed 於展開期間不可達——收合
@@ -161,51 +167,25 @@ func (a *app) homeView(c *ui.Context) {
 	a.removeModal(c)
 }
 
-// accountNavList 是側欄展開態的帳號清單（D28）：Avatar＋標籤（失效者
-// 加「（失效）」、活躍者勾選），點擊切換/重登；新增/移除在頂列（＋/−，
-// 全帶）。Lobe Avatar（marbled 色播種 ScreenName——D27 wave 2 項目提前
-// 兌現：側欄的頭像語義 MyGO ui.Avatar 無 marbled 面）。
-func (a *app) accountNavList(c *ui.Context) {
-	t := c.Theme()
-	ui.Column(c).Padding(8, 12).Gap(4).Children(func() {
-		ui.Text(c, "帳號").TextColor(t.TextMuted).FontSize(12)
-		for _, acc := range a.accounts {
-			acc := acc
-			invalid := a.accInvalid[acc.UserID]
-			active := acc.UserID == a.activeID
-			row := ui.Row(c).Padding(6, 8).Gap(8).AlignItems(ui.Center)
-			row.Children(func() {
-				display.Avatar(c, acc.ScreenName, display.AvatarProps{Size: 28})
-				ui.Column(c).Gap(0).Children(func() {
-					label := acc.ScreenName
-					if invalid {
-						label += "（失效）"
-					}
-					ui.Text(c, Sanitize("@"+label)).FontSize(13)
-				})
-			})
-			row = row.Background(t.Surface)
-			if row.Clicked() {
-				switch {
-				case invalid:
-					a.openRelogin(acc.UserID)
-				case !active:
-					a.switchTo(acc.UserID)
-				}
-			}
-		}
-	})
-}
+// reloginKeyPrefix 是失效帳號側欄項的鍵前綴：失效項點擊是動作而非切換
+// （沿 sidebarChosen 語義）——前綴使「激活變更」可被偵測（含重複點擊已
+// 選中的失效項）。
+const reloginKeyPrefix = "relogin:"
 
-// accountNavRail 是側欄收合態（64 DIP rail）：各帳號 Avatar 直欄，點擊
-// 切換/重登（標籤省略——rail 語義）。
-func (a *app) accountNavRail(c *ui.Context) {
-	ui.Column(c).Padding(8, 8).Gap(8).AlignItems(ui.Center).Children(func() {
-		for _, acc := range a.accounts {
-			acc := acc
-			display.Avatar(c, acc.ScreenName, display.AvatarProps{Size: 32})
+// navItems 組帳號側欄項（D31）：各帳號 Key=user_id、失效者改用 relogin
+// 前綴鍵＋「（失效）」標記。
+func (a *app) navItems() []shadnavigation.NavItem {
+	items := make([]shadnavigation.NavItem, 0, len(a.accounts))
+	for _, acc := range a.accounts {
+		key := acc.UserID
+		label := "@" + acc.ScreenName
+		if a.accInvalid[acc.UserID] {
+			key = reloginKeyPrefix + acc.UserID
+			label += "（失效）"
 		}
-	})
+		items = append(items, shadnavigation.NavItem{Key: key, Label: label, Group: "帳號"})
+	}
+	return items
 }
 
 // homeToolbar 繪製頂列（D20：恆顯）：左上帳號選單（band 0 收合為
@@ -215,12 +195,18 @@ func (a *app) accountNavRail(c *ui.Context) {
 func (a *app) homeToolbar(c *ui.Context, band int) {
 	ui.Toolbar(c, func() {
 		// 帳號新增/移除（全帶一致——D28：側欄只管切換/重登，管理動作
-		// 在頂列；移除針對活躍帳號，Modal 二次確認沿 accountMenu 同路
-		// 徑）。
-		if ui.Button(c, "＋").Disabled(a.switchBusy || len(a.accounts) >= maxAccounts).Clicked() {
+		// 在頂列；移除針對活躍帳號，AlertDialog 二次確認）。shadcn
+		// control.Button（D31）。
+		if shadcontrol.Button(c, "＋", shadcontrol.ButtonProps{
+			Variant:  shadcontrol.Outline,
+			Disabled: a.switchBusy || len(a.accounts) >= maxAccounts,
+		}).Clicked() {
 			a.beginLoginVariant(loginModeAdd, "")
 		}
-		if ui.Button(c, "−").Disabled(a.switchBusy || a.activeID == "").Clicked() {
+		if shadcontrol.Button(c, "−", shadcontrol.ButtonProps{
+			Variant:  shadcontrol.Outline,
+			Disabled: a.switchBusy || a.activeID == "",
+		}).Clicked() {
 			a.removeUserID = a.activeID
 			a.removeOpen = true
 		}
@@ -353,17 +339,16 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 				ui.Spinner(c) // mygo-components 對照：進行中的原生 widget
 			}
 		})
-		// 錯誤橫幅（契約 5）：Lobe Alert（mygo-components 對照：MyGO 無
-		// 橫幅 widget——真缺口，Error 染色＋Selectable 供複製）；重試為
-		// 顯式入口（原生 ui.Button）——錯誤後不自動重試（避免每框風
-		// 暴）；既有列表原樣。
+		// 錯誤橫幅（契約 5）：shadcn Alert（Destructive 染色；D31 換底）；
+		// 重試為顯式入口（shadcn Button，Secondary）——錯誤後不自動重試
+		//（避免每框風暴）；既有列表原樣。
 		if f.err != nil {
-			feedback.Alert(c, Sanitize(errorText(f.err)), feedback.AlertProps{
-				Type:       feedback.Error,
-				Selectable: true,
+			shaddisplay.Alert(c, shaddisplay.AlertProps{
+				Title:       Sanitize(errorText(f.err)),
+				Destructive: true,
 			})
 			ui.Row(c).Padding(0, 16, 8).Children(func() {
-				if ui.Button(c, "重試").Clicked() {
+				if shadcontrol.Button(c, "重試", shadcontrol.ButtonProps{Variant: shadcontrol.Secondary}).Clicked() {
 					f.err = nil
 					if a.searchOpen {
 						a.submitSearch(a.searchQuery) // 搜尋重試＝最後 query 再提交
@@ -373,17 +358,17 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 				}
 			})
 		}
-		// 載入骨架（Lobe Skeleton，sweep）：首載（posts 空＋busy）的佔位；
-		// 空狀態（Lobe Empty）：載入完畢且無帖（含到底）——取代空白列表。
+		// 載入骨架（shadcn Skeleton）：首載（posts 空＋busy）的佔位；空狀
+		// 態（shadcn Empty）：載入完畢且無帖（含到底）——取代空白列表。
 		if len(f.posts) == 0 && f.busy && f.err == nil {
 			ui.Column(c).Padding(8, 16).Gap(12).Children(func() {
 				for i := 0; i < 3; i++ {
-					display.Skeleton(c, display.SkeletonProps{Height: 64, Animation: display.SkeletonSweep})
+					shaddisplay.Skeleton(c, shaddisplay.SkeletonProps{Height: 64})
 				}
 			})
 		}
 		if len(f.posts) == 0 && f.end && f.err == nil && !f.busy {
-			display.Empty(c, display.EmptyProps{
+			shaddisplay.Empty(c, shaddisplay.EmptyProps{
 				Title:       "沒有貼文",
 				Description: homeEndText,
 			})
