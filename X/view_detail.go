@@ -346,9 +346,12 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 	}
 }
 
-// playerView 渲染活躍播放器（Ready → ui.Video；Err → 失敗 UX 帶真實錯
-// 誤描述——v1.1.3 診斷：解碼錯誤先前被靜默吞掉，播放器永遠停在海报；未
-// Ready → 縮圖命中或佔位——thumbLRU 唯讀、不派發下載）。
+// playerView 渲染活躍播放器（v1.1.4 修訂）：播放器存在即建構 ui.Video
+// ——系統引擎（Media Foundation）為渲染驅動：首幀送達需要 ui.Video 元
+// 素存在（「its first picture came, which builds a frame of the window
+// that shows it」），以 Ready 為閘門會雞生蛋死鎖（需求方實測 v1.1.3：
+// 永遠停在海报）。海報墊底、ui.Video 疊上——Ready 前可見海報，首幀送
+// 達即覆蓋。Err → 失敗 UX 帶真實錯誤描述（v1.1.3 診斷浮面）。
 func (a *app) playerView(c *ui.Context, thumbURL string) {
 	vp, ok := a.player.(*ui.VideoPlayer)
 	if !ok {
@@ -359,21 +362,15 @@ func (a *app) playerView(c *ui.Context, thumbURL string) {
 		a.mediaFailDetail(c, "播放器解碼失敗："+e.Error())
 		return
 	}
-	if vp.Ready() {
-		a.detailMediaBox(c, func() {
-			ui.Video(c, vp).Fill().Fit(ui.Contain)
-		})
-		return
-	}
-	if thumbURL != "" {
-		if src, ok := thumbLRU.get(thumbURL); ok {
-			a.detailMediaBox(c, func() {
+	a.detailMediaBox(c, func() {
+		// 海報墊底（Ready 前的可見面；thumbLRU 唯讀）。
+		if thumbURL != "" {
+			if src, ok := thumbLRU.get(thumbURL); ok {
 				ui.Image(c, src).Fill().Fit(ui.Contain)
-			})
-			return
+			}
 		}
-	}
-	a.detailPlaceholder(c)
+		ui.Video(c, vp).Fill().Fit(ui.Contain)
+	})
 }
 
 // videoPosterView 是 video 的懶建立海報（D24）：縮圖命中即呈、未命中佔
