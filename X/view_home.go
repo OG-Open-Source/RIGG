@@ -150,6 +150,16 @@ func (a *app) homeToolbar(c *ui.Context, band int) {
 	ui.Toolbar(c, func() {
 		if band == 0 {
 			a.accountSelect(c)
+			// 窄帶補新增/移除入口（需求方實測回饋 2026-11-15：band 0
+			// 僅 Select 切換不可接受——T14 Minor 3 的裁決兌現）。移除
+			// 針對活躍帳號（Modal 二次確認沿 accountMenu 同路徑）。
+			if ui.Button(c, "＋").Disabled(a.switchBusy || len(a.accounts) >= maxAccounts).Clicked() {
+				a.beginLoginVariant(loginModeAdd, "")
+			}
+			if ui.Button(c, "−").Disabled(a.switchBusy || a.activeID == "").Clicked() {
+				a.removeUserID = a.activeID
+				a.removeOpen = true
+			}
 		} else {
 			a.accountMenu(c)
 		}

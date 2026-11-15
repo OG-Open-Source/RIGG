@@ -188,21 +188,21 @@ func (a *app) startGifPlayback(url string) {
 	a.playerLoading = true
 	a.goSession(func(ctx context.Context) {
 		data, err := fetchMediaBytes(ctx, url, gifMaxBytes)
-		var pl player
-		var perr error
-		if err == nil {
-			pl, perr = newGifPlayer(data)
-		}
 		a.publish(func() {
 			a.playerLoading = false
 			if gen != a.gen || a.detail != d {
-				if pl != nil {
-					pl.Close()
-				}
 				return // 世代過期或展開檢視已收合／換帖：丟棄
 			}
-			if err != nil || perr != nil {
-				a.dmedia.playErr = mediaErr(err, perr)
+			if err != nil {
+				a.dmedia.playErr = err
+				return
+			}
+			// 播放器建構於主執行緒（P4 修訂）：MyGO 的視窗綁定物件不在
+			// 主執行緒建構時 Ready/渲染事件不送達（需求方實測「還是一張
+			// 圖片」的根因）。NewGIFDecoder 為純 Go 解碼、開銷小。
+			pl, perr := newGifPlayer(data)
+			if perr != nil {
+				a.dmedia.playErr = perr
 				return
 			}
 			a.player = pl
@@ -220,42 +220,30 @@ func (a *app) startVideoPlayback(url string) {
 	a.playerLoading = true
 	a.goSession(func(ctx context.Context) {
 		path, err := fetchMediaToFile(ctx, url, videoMaxBytes)
-		var pl player
-		var perr error
-		if err == nil {
-			pl, perr = openPlayer(path)
-			if perr != nil {
-				_ = os.Remove(path)
-			}
-		}
 		a.publish(func() {
 			a.playerLoading = false
 			if gen != a.gen || a.detail != d {
-				if pl != nil {
-					pl.Close()
-				}
 				if path != "" {
 					_ = os.Remove(path)
 				}
+				return // 世代過期或展開檢視已收合／換帖：丟棄
+			}
+			if err != nil {
+				a.dmedia.playErr = err
 				return
 			}
-			if err != nil || perr != nil {
-				a.dmedia.playErr = mediaErr(err, perr)
+			// 播放器建構於主執行緒（P4 修訂，同 startGifPlayback）；
+			// 開啟失敗即刪暫存檔。
+			pl, perr := openPlayer(path)
+			if perr != nil {
+				_ = os.Remove(path)
+				a.dmedia.playErr = perr
 				return
 			}
 			a.player = pl
 			a.playerPath = path
 		})
 	})
-}
-
-// mediaErr 取兩錯誤中的非 nil 者（D24 下載／開啟雙段的錯誤合流；皆 nil
-// 時不應被呼叫——防禦回 nil）。
-func mediaErr(err, perr error) error {
-	if err != nil {
-		return err
-	}
-	return perr
 }
 
 // detailView 建構展開檢視（band ≥2 右欄並列形態本體）：標題列（作者＋

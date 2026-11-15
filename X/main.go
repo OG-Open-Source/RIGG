@@ -169,12 +169,18 @@ type app struct {
 // newApp 建構 app：生命週期狀態先以無儲存層起手（main 於 store 建構成功
 // 後替換；測試逕用此形）。
 func newApp() *app {
-	return &app{
+	a := &app{
 		state:      NewAppState(nil),
 		accInvalid: map[string]bool{},
 		creds:      &credCache{},
 		feeds:      [3]*timelineState{{}, {}, {}},
 	}
+	// 列識別（ListState.Key）：以 work_id 為 row identity——posts 截尾
+	//（D26）與回填時列位移不破壞捲動語義（ui.txt:5770-5775）。
+	for _, s := range a.feeds {
+		s.list.Key = func(i int) any { return s.posts[i].WorkID }
+	}
+	return a
 }
 
 // accountByID 回帳號快照中指定 user_id 的帳號（帳號選單／側欄／重登入口

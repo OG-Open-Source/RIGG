@@ -96,7 +96,19 @@ func extractVideoMedia(node map[string]any, kind string) (MediaItem, bool) {
 	if info != nil {
 		variants, _ = info["variants"].([]any)
 	}
-	best := bestMP4Variant(variants)
+	var best map[string]any
+	if kind == "gif" {
+		// D24 修訂：GIF 走純 Go GIF 解碼（NewGIFDecoder 需 GIF 本體）——
+		// URL 取 variants 中的 image/gif variant（animated_gif 的
+		// video_info 恆含之）；缺 gif variant 時退回 mp4（呼叫端以
+		// content_type 判別後續處理）。
+		best = bestGifVariant(variants)
+		if best == nil {
+			best = bestMP4Variant(variants)
+		}
+	} else {
+		best = bestMP4Variant(variants)
+	}
 	if best == nil {
 		return MediaItem{}, false
 	}
@@ -108,8 +120,8 @@ func extractVideoMedia(node map[string]any, kind string) (MediaItem, bool) {
 }
 
 // bestMP4Variant 自 variants 過濾 content_type=="video/mp4"（REQ-DAT-016；
-// GIF 亦走 mp4——D13；m3u8 為 application/x-mpegURL 不入選——P0' 實證），
-// 回 bitrate 最高者；並列取遍歷序首個（嚴格大於方替換）；無 mp4 回 nil。
+// m3u8 為 application/x-mpegURL 不入選——P0' 實證），回 bitrate 最高者；
+// 並列取遍歷序首個（嚴格大於方替換）；無 mp4 回 nil。
 func bestMP4Variant(variants []any) map[string]any {
 	var best map[string]any
 	bestBitrate := 0.0
@@ -127,6 +139,22 @@ func bestMP4Variant(variants []any) map[string]any {
 		}
 	}
 	return best
+}
+
+// bestGifVariant 自 variants 過濾 content_type=="image/gif"（D24：GIF 走
+// 純 Go GIF 解碼，需 GIF 本體；animated_gif 的 video_info 恆含 gif
+// variant）；並列取遍歷序首個；無 gif variant 回 nil（呼叫端退回 mp4）。
+func bestGifVariant(variants []any) map[string]any {
+	for _, v := range variants {
+		m, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if nodeString(m["content_type"]) == "image/gif" {
+			return m
+		}
+	}
+	return nil
 }
 
 // mediaCDNURL 組媒體 CDN URL：<base>?format=<ext>&name=<name>。<ext> 沿用

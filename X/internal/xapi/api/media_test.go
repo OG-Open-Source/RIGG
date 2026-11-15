@@ -226,11 +226,43 @@ func TestMediaExtractionVideoHighestBitrate(t *testing.T) {
 // TestMediaExtractionGifUsesMP4：animated_gif → Kind=="gif"（D13），URL 為
 // mp4 variant（不採 m3u8）。
 func TestMediaExtractionGifUsesMP4(t *testing.T) {
+	// D24 修訂：gif 優先取 image/gif variant（NewGIFDecoder 需 GIF 本體）；
+	// m3u8 恆不入選。
 	data := tlData([]map[string]any{
 		tlMediaEntry(
 			"tweet-1", "1301", "gif post",
 			tlVideoNode(
 				"animated_gif", "https://pbs.twimg.test/media/GIFPOST1.jpg",
+				tlVariant("application/x-mpegURL", 1280000, "https://video.twimg.test/vid/GIFA.m3u8"),
+				tlVariant("video/mp4", 960000, "https://video.twimg.test/vid/GIFB.mp4"),
+				tlVariant("image/gif", 0, "https://video.twimg.test/vid/GIFC.gif"),
+			),
+		),
+	})
+	posts := parseFixturePosts(t, data)
+	if len(posts) != 1 {
+		t.Fatalf("應得 1 條貼文，得到 %d", len(posts))
+	}
+	got := posts[0].Media
+	if len(got) != 1 {
+		t.Fatalf("應得 1 個媒體項，得到 %d：%+v", len(got), got)
+	}
+	if got[0].Kind != "gif" {
+		t.Errorf("Kind = %q, 期望 \"gif\"（animated_gif → gif）", got[0].Kind)
+	}
+	if got[0].URL != "https://video.twimg.test/vid/GIFC.gif" {
+		t.Errorf("URL = %q, 期望 image/gif variant（D24：GIF 走純 Go 解碼）", got[0].URL)
+	}
+}
+
+// TestMediaExtractionGifFallsBackToMP4（D24 退路）：variants 缺 image/gif
+// 時退回最高位元率 mp4（m3u8 仍不入選）。
+func TestMediaExtractionGifFallsBackToMP4(t *testing.T) {
+	data := tlData([]map[string]any{
+		tlMediaEntry(
+			"tweet-2", "1302", "gif post no gif variant",
+			tlVideoNode(
+				"animated_gif", "https://pbs.twimg.test/media/GIFPOST2.jpg",
 				tlVariant("application/x-mpegURL", 1280000, "https://video.twimg.test/vid/GIFA.m3u8"),
 				tlVariant("video/mp4", 960000, "https://video.twimg.test/vid/GIFB.mp4"),
 			),
@@ -244,11 +276,8 @@ func TestMediaExtractionGifUsesMP4(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("應得 1 個媒體項，得到 %d：%+v", len(got), got)
 	}
-	if got[0].Kind != "gif" {
-		t.Errorf("Kind = %q, 期望 \"gif\"（animated_gif → gif，D13）", got[0].Kind)
-	}
 	if got[0].URL != "https://video.twimg.test/vid/GIFB.mp4" {
-		t.Errorf("URL = %q, 期望 mp4 variant（GIF 走 mp4，不採 m3u8）", got[0].URL)
+		t.Errorf("URL = %q, 期望退回 mp4 variant（無 gif variant 時）", got[0].URL)
 	}
 }
 
