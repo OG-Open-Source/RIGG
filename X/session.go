@@ -28,6 +28,7 @@ type (
 	timelineResult = api.TimelineResult
 	post           = api.Post
 	viewerInfo     = api.ViewerInfo
+	mediaItem      = api.MediaItem
 )
 
 // homePageSize 是每次翻頁的 count（契約 3：HomeTimeline(cursor, 20, seen)）。

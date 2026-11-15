@@ -10,7 +10,10 @@
 // 或缺錨點回 nil——Media 非 nil 必 len>0。
 package api
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // MediaItem 是單一媒體項（REQ-DAT-011/013/015/016/018 的 v1.1 子集）。
 type MediaItem struct {
@@ -113,10 +116,38 @@ func extractVideoMedia(node map[string]any, kind string) (MediaItem, bool) {
 		return MediaItem{}, false
 	}
 	item := MediaItem{Kind: kind, URL: nodeString(best["url"])}
+	// 影片尺寸自 variant URL 解析（形如 /vid/<codec>/<w>x<h>/…）——展開
+	// 檢視的媒體盒以比例自適應高（v1.1.4：固定高造成直式影片 letterbox）。
+	if w, h, ok := videoDimsFromURL(item.URL); ok {
+		item.Width, item.Height = w, h
+	}
 	if base, _ := node["media_url_https"].(string); base != "" {
 		item.ThumbURL = mediaCDNURL(base, "small")
 	}
 	return item, true
+}
+
+// videoDimsFromURL 自 video variant URL 解析像素尺寸（X 的 variant 路徑
+// 恆含 /vid/<codec>/<w>x<h>/ 段）；無此段回 ok=false。
+func videoDimsFromURL(url string) (int, int, bool) {
+	i := strings.LastIndex(url, "/vid/")
+	if i < 0 {
+		return 0, 0, false
+	}
+	segs := strings.Split(url[i+5:], "/")
+	if len(segs) < 2 {
+		return 0, 0, false
+	}
+	parts := strings.SplitN(segs[1], "x", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	w, err1 := strconv.Atoi(parts[0])
+	h, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil || w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
 }
 
 // bestMP4Variant 自 variants 過濾 content_type=="video/mp4"（REQ-DAT-016；

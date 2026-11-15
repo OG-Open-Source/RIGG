@@ -311,12 +311,11 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 		case a.dmedia.img != nil:
 			// Lobe display.Image（mygo-components 對照：MyGO ui.Image 無
 			// 預覽檢視器——真缺口）：圓角框＋點擊飛出預覽（滾輪縮放、拖
-			// 曳平移、Escape 關閉）。
-			a.detailMediaBox(c, func() {
-				display.Image(c, a.dmedia.img, display.ImageProps{
-					Contain: true,
-					Alt:     Sanitize("@" + p.ScreenName + " 的貼文圖片"),
-				}).Fill()
+			// 曳平移、Escape 關閉）。自然比例（寬受限於容器、高隨比例）
+			// ——不再固定高 letterbox。
+			display.Image(c, a.dmedia.img, display.ImageProps{
+				Contain: true,
+				Alt:     Sanitize("@" + p.ScreenName + " 的貼文圖片"),
 			})
 		case a.dmedia.imgFail:
 			a.mediaFailView(c, p)
@@ -328,7 +327,7 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 		case a.dmedia.playErr != nil:
 			a.mediaFailDetail(c, a.dmedia.playErr.Error()) // v1.1.3 診斷浮面
 		case a.player != nil:
-			a.playerView(c, m.ThumbURL)
+			a.playerView(c, m)
 		case a.playerLoading:
 			a.detailPlaceholder(c) // 下載暫存檔中（D24）
 		default:
@@ -339,7 +338,7 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 		case a.dmedia.playErr != nil:
 			a.mediaFailDetail(c, a.dmedia.playErr.Error())
 		case a.player != nil:
-			a.playerView(c, m.ThumbURL)
+			a.playerView(c, m)
 		default:
 			a.detailPlaceholder(c) // 自動下載／解碼中（openDetail 已派發，D24）
 		}
@@ -350,9 +349,12 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 // ——系統引擎（Media Foundation）為渲染驅動：首幀送達需要 ui.Video 元
 // 素存在（「its first picture came, which builds a frame of the window
 // that shows it」），以 Ready 為閘門會雞生蛋死鎖（需求方實測 v1.1.3：
-// 永遠停在海报）。海報墊底、ui.Video 疊上——Ready 前可見海報，首幀送
-// 達即覆蓋。Err → 失敗 UX 帶真實錯誤描述（v1.1.3 診斷浮面）。
-func (a *app) playerView(c *ui.Context, thumbURL string) {
+// 永遠停在海报）。**單一可見面**：就緒前呈海報（thumbnail）、就緒後呈
+// 影片——Column 直疊下兩者並列即「影片出現在下面」（需求方實測
+// v1.1.4），故以 Ready 互斥切換，兩者不同框。Err → 失敗 UX 帶真實錯誤
+// 描述（v1.1.3 診斷浮面）。媒體盒高按影片比例自適應（v1.1.4：固定高
+// 對直式影片 letterbox）。
+func (a *app) playerView(c *ui.Context, m mediaItem) {
 	vp, ok := a.player.(*ui.VideoPlayer)
 	if !ok {
 		a.detailPlaceholder(c)
@@ -362,15 +364,33 @@ func (a *app) playerView(c *ui.Context, thumbURL string) {
 		a.mediaFailDetail(c, "播放器解碼失敗："+e.Error())
 		return
 	}
-	a.detailMediaBox(c, func() {
-		// 海報墊底（Ready 前的可見面；thumbLRU 唯讀）。
-		if thumbURL != "" {
-			if src, ok := thumbLRU.get(thumbURL); ok {
+	h := mediaBoxHeight(m.Width, m.Height)
+	ready := vp.Ready()
+	ui.Column(c).Fill().Height(h).Background(c.Theme().Surface).Children(func() {
+		if !ready && m.ThumbURL != "" {
+			if src, ok := thumbLRU.get(m.ThumbURL); ok {
 				ui.Image(c, src).Fill().Fit(ui.Contain)
+				return
 			}
 		}
 		ui.Video(c, vp).Fill().Fit(ui.Contain)
 	})
+}
+
+// mediaBoxHeight 以媒體比例估算展開檢視的媒體盒高（DIP）：基準寬 560
+// （內容欄寬的中值），夾在 [160, 640]；無尺寸資訊回 detailMediaHeight。
+func mediaBoxHeight(w, h int) float32 {
+	if w <= 0 || h <= 0 {
+		return detailMediaHeight
+	}
+	eh := 560 * float32(h) / float32(w)
+	if eh < 160 {
+		return 160
+	}
+	if eh > 640 {
+		return 640
+	}
+	return eh
 }
 
 // videoPosterView 是 video 的懶建立海報（D24）：縮圖命中即呈、未命中佔
@@ -395,7 +415,8 @@ func (a *app) videoPosterView(c *ui.Context, thumbURL, url string) {
 	}
 }
 
-// detailMediaBox 是媒體區的固定高容器（背景色塊；內容 Fit(Contain) 貼合）。
+// detailMediaBox 是媒體區的固定高容器（背景色塊；內容 Fit(Contain) 貼合）
+// ——detailPlaceholder 佔位用；媒體本體改走比例自適應高（mediaBoxHeight）。
 func (a *app) detailMediaBox(c *ui.Context, content func()) {
 	t := c.Theme()
 	ui.Column(c).Fill().Height(detailMediaHeight).Background(t.Surface).Children(content)
