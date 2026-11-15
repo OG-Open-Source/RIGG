@@ -275,23 +275,28 @@ func (a *app) startVideoPlayback(url string) {
 // 下一 pass），呈現幀不殘留關閉後狀態。
 func (a *app) detailView(c *ui.Context, p post) {
 	t := c.Theme()
-	ui.Column(c).Padding(12, 16).Gap(8).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			// 作者頭像（MyGO 內建 ui.Avatar——mygo-components 對照：原生
-			// widget；name 播種、無圖走文字 fallback）。
-			ui.Avatar(c, p.ScreenName, nil)
-			ui.Text(c, Sanitize("@"+p.ScreenName)).TextColor(t.TextMuted).Grow(1)
-			if ui.Button(c, detailCloseText).Clicked() {
-				a.closeDetail() // 收合：顯式 Close（§8.6 離開展開檢視）
+	// v1.1.5：內容包原生 ui.Scroll（mygo-components 對照：捲動區域）——
+	// 直式影片的媒體盒可達 994 DIP，超出視窗的內容先前被裁切（收合鈕
+	// 不可達＝「卡住」）；Scroll 使溢出可捲。
+	ui.Scroll(c).Fill().Children(func() {
+		ui.Column(c).Padding(12, 16).Gap(8).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				// 作者頭像（MyGO 內建 ui.Avatar——mygo-components 對照：原生
+				// widget；name 播種、無圖走文字 fallback）。
+				ui.Avatar(c, p.ScreenName, nil)
+				ui.Text(c, Sanitize("@"+p.ScreenName)).TextColor(t.TextMuted).Grow(1)
+				if ui.Button(c, detailCloseText).Clicked() {
+					a.closeDetail() // 收合：顯式 Close（§8.6 離開展開檢視）
+				}
+			})
+			if p.Title != "" {
+				ui.Text(c, Sanitize(p.Title))
 			}
+			if p.WorkURL != "" {
+				ui.Link(c, "開啟貼文", Sanitize(p.WorkURL))
+			}
+			a.detailMediaView(c, p)
 		})
-		if p.Title != "" {
-			ui.Text(c, Sanitize(p.Title))
-		}
-		if p.WorkURL != "" {
-			ui.Link(c, "開啟貼文", Sanitize(p.WorkURL))
-		}
-		a.detailMediaView(c, p)
 	})
 }
 
@@ -345,15 +350,14 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 	}
 }
 
-// playerView 渲染活躍播放器（v1.1.4 修訂）：播放器存在即建構 ui.Video
-// ——系統引擎（Media Foundation）為渲染驅動：首幀送達需要 ui.Video 元
-// 素存在（「its first picture came, which builds a frame of the window
-// that shows it」），以 Ready 為閘門會雞生蛋死鎖（需求方實測 v1.1.3：
-// 永遠停在海报）。**單一可見面**：就緒前呈海報（thumbnail）、就緒後呈
-// 影片——Column 直疊下兩者並列即「影片出現在下面」（需求方實測
-// v1.1.4），故以 Ready 互斥切換，兩者不同框。Err → 失敗 UX 帶真實錯誤
-// 描述（v1.1.3 診斷浮面）。媒體盒高按影片比例自適應（v1.1.4：固定高
-// 對直式影片 letterbox）。
+// playerView 渲染活躍播放器（v1.1.5 修訂）：**ui.Video 恆建構、每幀必
+// 建**——系統引擎（Media Foundation）為渲染驅動：首幀送達需要 ui.Video
+// 元素存在（「its first picture came, which builds a frame of the window
+// that shows it」）。v1.1.3 以 Ready 閘門（元素不建 → 死鎖）、v1.1.4 以
+// 海報分支（!Ready 時 ui.Image return，元素又不建）兩度重演死鎖——本版
+// 起播放中狀態一律直建 ui.Video（本機檔首幀 <1 秒，黑框短暫可接受；開
+// 帖前的海報＋播放鈕已提供視覺連續性）。Err → 失敗 UX 帶真實錯誤描述。
+// 媒體盒高按影片比例自適應（v1.1.4：固定高對直式影片 letterbox）。
 func (a *app) playerView(c *ui.Context, m mediaItem) {
 	vp, ok := a.player.(*ui.VideoPlayer)
 	if !ok {
@@ -365,14 +369,7 @@ func (a *app) playerView(c *ui.Context, m mediaItem) {
 		return
 	}
 	h := mediaBoxHeight(m.Width, m.Height)
-	ready := vp.Ready()
 	ui.Column(c).Fill().Height(h).Background(c.Theme().Surface).Children(func() {
-		if !ready && m.ThumbURL != "" {
-			if src, ok := thumbLRU.get(m.ThumbURL); ok {
-				ui.Image(c, src).Fill().Fit(ui.Contain)
-				return
-			}
-		}
 		ui.Video(c, vp).Fill().Fit(ui.Contain)
 	})
 }
