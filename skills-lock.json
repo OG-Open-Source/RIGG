@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "mygo-components": {
+      "source": "transmit-bug/mygo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mygo-components/SKILL.md",
+      "computedHash": "8bfb4c742b5c4b4deafe32d3a7bec53cc0521be64c8ae9196683fbd60e977be5"
+    }
+  }
+}

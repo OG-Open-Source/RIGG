@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/feedback"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 
 	"github.com/OG-Open-Source/RIGG/X/internal/xapi/xerrors"
 )
@@ -21,6 +23,7 @@ import (
 // 標題帶入口語義（重登帶目標帳號標籤），並提供「返回」回 home（首次登
 // 入形無返回：無 home 可回）。
 func (a *app) loginView(c *ui.Context) {
+	theme.Apply(c) // Lobe 設計語言（與 home 同一 token 面）
 	t := c.Theme()
 	ui.Column(c).Fill().Center().Gap(16).Padding(24).Children(func() {
 		title := "X"
@@ -46,9 +49,14 @@ func (a *app) loginView(c *ui.Context) {
 		}
 		ui.Text(c, proxyLine).TextColor(t.TextMuted)
 		// 啟動（指紋／註冊表／儲存層）錯誤區：fail-closed 呈現，提交時
-		// newSession 對同一來源再驗，錯誤不會被吞。
+		// newSession 對同一來源再驗，錯誤不會被吞。Lobe Alert
+		//（mygo-components 對照：MyGO 無橫幅 widget——真缺口，Error 染
+		// 色＋Selectable）。
 		if a.startErr != nil {
-			ui.Text(c, Sanitize(errorText(a.startErr))).TextColor(t.Danger)
+			feedback.Alert(c, Sanitize(errorText(a.startErr)), feedback.AlertProps{
+				Type:       feedback.Error,
+				Selectable: true,
+			})
 		}
 		// Cookie 貼上輸入。輸入緩衝保留使用者貼上的原值以供提交（登入
 		// 必需）；顯示以 Password 遮罩（MyGO 標準密碼輸入模式：只遮顯示

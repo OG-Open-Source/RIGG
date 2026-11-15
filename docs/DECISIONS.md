@@ -710,3 +710,26 @@ v1.0.13-utls）。
   兩項落地（磁碟快取維持不採）。
 * **待驗**：需求方以同法複測三場景（閒置/100 帖含媒體/播放中）——
   L2 RAM 驗收閘門。
+
+### D27 UI 元件層：MyGO 原生優先、Lobe MyGo 補位（mygo-components 對照，2026-11-15）
+
+* **裁決**：UI 需求一律先對照 MyGO v0.9.0 原生 inventory（skill
+  `mygo-components` 的 need→widget map），原生有即用原生；Lobe MyGo
+  （`github.com/lobehub/lobe-mygo`）僅落原生真缺口。對照結果——
+  * **原生採用**：`ui.Segmented`（鄰近檢視切換）、`ui.SearchField`
+    （含清除鈕與 Escape 的搜尋欄）、`ui.Spinner`（進行中）、
+    `ui.Button`（重試）、`ui.Avatar`（展開檢視作者頭像）。
+  * **Lobe 補位**（原生真缺口）：`theme.Apply`＋Tokens（設計語言，
+    需求方指定 Lobe）；`feedback.Alert`（MyGO 無橫幅 widget——
+    switchErr／feed err／startErr／媒體失敗四面）；`display.Skeleton`
+    （無原生骨架）；`display.Empty`（無原生空狀態 widget）；
+    `display.Image`（MyGO ui.Image 無預覽檢視器——點擊飛出、滾輪縮
+    放、拖曳平移，展開檢視大圖專用；列表縮圖維持 `ui.Image`）。
+* **依據**：需求方引入 skill `mygo-components`（transmit-bug/
+  mygo-skills）＋指示以 Lobe MyGo 建置原生 UI；skill 的 reconcile 紀
+  律（先原生、真缺口才引庫、記錄判決）。
+* **相依**：`lobe-mygo` v0.0.0-20261110（需 mygo ≥v0.8.4-20261108——
+  我們的 v0.9.0 滿足；純 Go、無 cgo；wasm 測試載體建置通過）。
+* **待辦（wave 2 候選）**：`overlay.DropdownMenu`（帳號選單圖示化）、
+  `feedback.Toast`（切換成功回饋——MyGO 原生 `c.Toast` 亦可）、
+  `display.Avatar`（Lobe marbled 色）——皆待需求方對視覺方向表態。

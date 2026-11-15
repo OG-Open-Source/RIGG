@@ -24,6 +24,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
+	"github.com/lobehub/lobe-mygo/pkg/display"
+	"github.com/lobehub/lobe-mygo/pkg/feedback"
 )
 
 // player 是播放器生命週期的測試 seam 最小面（*ui.VideoPlayer 滿足之）：
@@ -255,6 +257,9 @@ func (a *app) detailView(c *ui.Context, p post) {
 	t := c.Theme()
 	ui.Column(c).Padding(12, 16).Gap(8).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			// 作者頭像（MyGO 內建 ui.Avatar——mygo-components 對照：原生
+			// widget；name 播種、無圖走文字 fallback）。
+			ui.Avatar(c, p.ScreenName, nil)
 			ui.Text(c, Sanitize("@"+p.ScreenName)).TextColor(t.TextMuted).Grow(1)
 			if ui.Button(c, detailCloseText).Clicked() {
 				a.closeDetail() // 收合：顯式 Close（§8.6 離開展開檢視）
@@ -284,8 +289,14 @@ func (a *app) detailMediaView(c *ui.Context, p post) {
 	case "photo":
 		switch {
 		case a.dmedia.img != nil:
+			// Lobe display.Image（mygo-components 對照：MyGO ui.Image 無
+			// 預覽檢視器——真缺口）：圓角框＋點擊飛出預覽（滾輪縮放、拖
+			// 曳平移、Escape 關閉）。
 			a.detailMediaBox(c, func() {
-				ui.Image(c, a.dmedia.img).Fill().Fit(ui.Contain)
+				display.Image(c, a.dmedia.img, display.ImageProps{
+					Contain: true,
+					Alt:     Sanitize("@" + p.ScreenName + " 的貼文圖片"),
+				}).Fill()
 			})
 		case a.dmedia.imgFail:
 			a.mediaFailView(c, p)
@@ -360,23 +371,25 @@ func (a *app) detailMediaBox(c *ui.Context, content func()) {
 	ui.Column(c).Fill().Height(detailMediaHeight).Background(t.Surface).Children(content)
 }
 
-// detailPlaceholder 是媒體載入中的佔位（主題色塊＋載入文字）。
+// detailPlaceholder 是媒體載入中的佔位（主題色塊＋原生 Spinner＋載入文
+// 字——mygo-components 對照：進行中的原生 widget）。
 func (a *app) detailPlaceholder(c *ui.Context) {
 	t := c.Theme()
 	a.detailMediaBox(c, func() {
-		ui.Text(c, detailLoadingText).TextColor(t.TextMuted)
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Spinner(c)
+			ui.Text(c, detailLoadingText).TextColor(t.TextMuted)
+		})
 	})
 }
 
-// mediaFailView 是媒體失敗 UX（msgMedia＋外開 WorkURL）：媒體 403/404 不
-// 落引擎六 kind（app 層語義）——固定文案，不拼接錯誤原始訊息（REQ-INV-01
+// mediaFailView 是媒體失敗 UX（Lobe Alert——mygo-components 對照：MyGO
+// 無橫幅 widget，真缺口；msgMedia＋外開 WorkURL）：媒體 403/404 不落引
+// 擎六 kind（app 層語義）——固定文案，不拼接錯誤原始訊息（REQ-INV-01
 // 同形：無憑證材料可能）。
 func (a *app) mediaFailView(c *ui.Context, p post) {
-	t := c.Theme()
-	ui.Column(c).Gap(4).Children(func() {
-		ui.Text(c, msgMedia).TextColor(t.Danger)
-		if p.WorkURL != "" {
-			ui.Link(c, msgOpenExternal, Sanitize(p.WorkURL))
-		}
-	})
+	feedback.Alert(c, msgMedia, feedback.AlertProps{Type: feedback.Warning})
+	if p.WorkURL != "" {
+		ui.Link(c, msgOpenExternal, Sanitize(p.WorkURL))
+	}
 }

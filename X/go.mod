@@ -22,6 +22,7 @@ require (
 	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/lobehub/lobe-mygo v0.0.0-20261110162706-5e5fea5ef9e2 // indirect
 	github.com/molecule-man/go-brrr v1.2.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/tam7t/hpkp v0.0.0-20160821193359-2b70b4024ed5 // indirect

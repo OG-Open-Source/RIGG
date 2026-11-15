@@ -16,6 +16,9 @@ import (
 	"context"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/display"
+	"github.com/lobehub/lobe-mygo/pkg/feedback"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 )
 
 // feed 槽索引（Task 8）：activeFeed 用裸 int＋常數（ui.Tabs 需要 *int）。
@@ -86,6 +89,7 @@ const (
 // 帳號的確認 Modal 於各帶頂層呈現；切換失敗的錯誤區（switchErr）呈於頂
 // 列之下。
 func (a *app) homeView(c *ui.Context) {
+	theme.Apply(c) // Lobe MyGo 設計語言（淺色/深色隨系統；TokensOf 取對應 token）
 	w, _ := c.Size()
 	band := a.layoutBand(w)
 	// 選單一律以主題彈出呈現（PopoverMenus）：與自繪 UI 同貌，內窗可檢
@@ -98,10 +102,11 @@ func (a *app) homeView(c *ui.Context) {
 		if a.switchErr != nil {
 			// 帳號選單錯誤區（switchErr，Task 8 接線由本任務的選單落
 			// 地）：最近一次切換失敗的文案；成功切換即清除（runSwitch）。
-			// 既有內容原樣（REQ-LOG-042/043 同形：僅顯示）。
-			t := c.Theme()
-			ui.Row(c).Padding(8, 16).AlignItems(ui.Center).Background(t.Surface).Children(func() {
-				ui.Text(c, Sanitize(errorText(a.switchErr))).TextColor(t.Danger).Grow(1)
+			// 既有內容原樣（REQ-LOG-042/043 同形：僅顯示）。Lobe Alert
+			//（Error 染色；Selectable 供複製細節）。
+			feedback.Alert(c, Sanitize(errorText(a.switchErr)), feedback.AlertProps{
+				Type:       feedback.Error,
+				Selectable: true,
 			})
 		}
 		if band < 2 && a.detail != nil {
@@ -164,13 +169,18 @@ func (a *app) homeToolbar(c *ui.Context, band int) {
 			a.accountMenu(c)
 		}
 		ui.Spacer(c)
-		in := ui.TextInput(c, &a.searchInput).Placeholder("搜尋貼文").Label("搜尋")
+		// 搜尋（MyGO 內建 ui.SearchField——mygo-components 對照：含清除
+		// 鈕與 Escape 的原生搜尋欄，Lobe SearchBar 不採）：Enter 提交
+		//（Submitted）；Label「搜尋」供輔助技術與測試定位、Placeholder
+		//「搜尋貼文」空態顯示。窄帶收合固定窄寬（其餘帶固定寬、Spacer
+		// 推右）。
+		sf := ui.SearchField(c, &a.searchInput).Label("搜尋").Placeholder("搜尋貼文")
 		if band == 0 {
-			in = in.Width(160) // 窄帶收合：固定窄寬（其餘帶固定寬、Spacer 推右）
+			sf = sf.Width(160)
 		} else {
-			in = in.Width(320)
+			sf = sf.Width(320)
 		}
-		if in.Submitted() {
+		if sf.Submitted() {
 			a.submitSearch(a.searchInput)
 		}
 	})
@@ -354,14 +364,15 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 	}
 	root.Children(func() {
 		if band == 0 {
-			// tabs（MyGO 內建；僅 band 0——band ≥1 由側欄承載）：點選
-			// 即改寫 a.activeFeed——建構返回前該框輸入已套用，其後整框
-			// 即以切換後的槽渲染（下方讀取 activeFeed 取得新選擇）。搜
-			// 尋結果（feedSearch）不在 tabs：MyGO Tabs 會把越界選擇鉗回
-			// 範圍，故 activeFeed 恆為 tab 索引、搜尋以 searchOpen 另行
-			// 標示——其間點回任一 tab（Changed）即關閉（已選 tab 的點
-			// 擊不觸發 Changed——顯式返回入口見標題列）。
-			tabs := ui.Tabs(c, &a.activeFeed, "For You", "Following")
+			// tabs（MyGO 內建 ui.Segmented——mygo-components 對照：鄰近
+			// 檢視切換的原生 widget，Lobe Segmented 不採；僅 band 0——
+			// band ≥1 由側欄承載）：點選即改寫 a.activeFeed——建構返回
+			// 前該框輸入已套用，其後整框即以切換後的槽渲染（下方讀取
+			// activeFeed 取得新選擇）。搜尋結果（feedSearch）不在 tabs：
+			// 越界選擇會被鉗回範圍，故 activeFeed 恆為 tab 索引、搜尋以
+			// searchOpen 另行標示——其間點回任一 tab（Changed）即關閉
+			//（已選 tab 的點擊不觸發 Changed——顯式返回入口見標題列）。
+			tabs := ui.Segmented(c, &a.activeFeed, "For You", "Following")
 			if wasSearch && tabs.Changed() {
 				a.closeSearch() // 點回 For You/Following：ephemeral 槽歸零
 			}
@@ -404,14 +415,19 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 			}
 			ui.Text(c, title).FontSize(20).Bold().Grow(1)
 			if f.busy {
-				ui.Spinner(c)
+				ui.Spinner(c) // mygo-components 對照：進行中的原生 widget
 			}
 		})
-		// 錯誤橫幅（契約 5）：顯示 errorText 文案與重試入口；既有列表
-		// 原樣。錯誤後不自動重試（避免每框風暴），重試走顯式入口。
+		// 錯誤橫幅（契約 5）：Lobe Alert（mygo-components 對照：MyGO 無
+		// 橫幅 widget——真缺口，Error 染色＋Selectable 供複製）；重試為
+		// 顯式入口（原生 ui.Button）——錯誤後不自動重試（避免每框風
+		// 暴）；既有列表原樣。
 		if f.err != nil {
-			ui.Row(c).Padding(8, 16).Gap(10).AlignItems(ui.Center).Background(t.Surface).Children(func() {
-				ui.Text(c, Sanitize(errorText(f.err))).TextColor(t.Danger).Grow(1)
+			feedback.Alert(c, Sanitize(errorText(f.err)), feedback.AlertProps{
+				Type:       feedback.Error,
+				Selectable: true,
+			})
+			ui.Row(c).Padding(0, 16, 8).Children(func() {
 				if ui.Button(c, "重試").Clicked() {
 					f.err = nil
 					if a.searchOpen {
@@ -420,6 +436,21 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 						a.loadFeed(a.activeFeed)
 					}
 				}
+			})
+		}
+		// 載入骨架（Lobe Skeleton，sweep）：首載（posts 空＋busy）的佔位；
+		// 空狀態（Lobe Empty）：載入完畢且無帖（含到底）——取代空白列表。
+		if len(f.posts) == 0 && f.busy && f.err == nil {
+			ui.Column(c).Padding(8, 16).Gap(12).Children(func() {
+				for i := 0; i < 3; i++ {
+					display.Skeleton(c, display.SkeletonProps{Height: 64, Animation: display.SkeletonSweep})
+				}
+			})
+		}
+		if len(f.posts) == 0 && f.end && f.err == nil && !f.busy {
+			display.Empty(c, display.EmptyProps{
+				Title:       "沒有貼文",
+				Description: homeEndText,
 			})
 		}
 		// 時間線列表：work_id 去重合併（首見順序）後的已顯示貼文；顯示
