@@ -738,3 +738,18 @@ v1.0.13-utls）。
 * **待辦（wave 2 候選）**：`overlay.DropdownMenu`（帳號選單圖示化）、
   `feedback.Toast`（切換成功回饋——MyGO 原生 `c.Toast` 亦可）、
   `display.Avatar`（Lobe marbled 色）——皆待需求方對視覺方向表態。
+
+### D30 v1.2 待辦登錄（需求方實測回饋，2026-11-15）
+
+* **登錄**（需求方 2026-11-15 實測：影片「已經可以用了，但是非常的基
+  礎，只有播放」＋「主要還是捲動存在明顯問題，我認為單就他的 UI/UX
+  應該重構」——兩項列 v1.2 重構主軸，不阻 v0.2.0 發布）：
+  * **播放器控制列**：MyGO `VideoPlayer` 已有 `Pause`/`Seek`/`Position`
+    /`Duration`/`Volume`/`Rate`——UI 面僅缺控制列（進度條＋播放/暫停
+    ＋音量）。v1.1 僅自動播放（需求方知悉並接受為基礎形）。
+  * **捲動 UX 重構**：需求方判定 MyGO `ui.List`／`ui.Scroll` 的捲動行
+    為存在明顯問題（具體情境待補：何種操作、何處卡頓/跳動）。v1.2
+    候選方向：Lobe `layout.ScrollArea`（thin scroll bars＋邊緣淡出）
+    或自訂捲動行為；重構時沿 mygo-components reconcile 紀律。
+* **發布決定（同日）**：需求方裁定現況可發布 `X/v0.2.0`（上述兩項列
+  v1.2，隨 README 版本路線披露）。
