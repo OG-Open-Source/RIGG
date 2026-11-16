@@ -123,12 +123,16 @@ func (a *app) homeView(c *ui.Context) {
 		ui.Row(c).Fill().Children(func() {
 			// D31：帳號側欄（shadcn navigation.Sidebar，靜態列）——
 			// 各帳號一項（失效者標記＋relogin 前綴鍵），激活寫回 navSel。
+			// FillWidth 明確欄寬行為；FillHeight 貼滿左緣全高（v1.1.5
+			// 快照：內容高置中浮動；Feed Grow 前先約束側欄寬，避免
+			// feed 被擠出視窗——v1.1.5 全螢幕快照實證）。
 			prev := a.navSel
 			shadnavigation.Sidebar(c, &a.navSel, shadnavigation.SidebarProps{
 				Items:     a.navItems(),
 				Label:     "帳號",
 				Collapsed: &a.navCollapsed,
-			}, nil)
+				Width:     220,
+			}, nil).FillHeight()
 			if a.navSel != prev && a.navSel != "" {
 				switch {
 				case strings.HasPrefix(a.navSel, reloginKeyPrefix):
@@ -196,14 +200,15 @@ func (a *app) homeToolbar(c *ui.Context, band int) {
 	ui.Toolbar(c, func() {
 		// 帳號新增/移除（全帶一致——D28：側欄只管切換/重登，管理動作
 		// 在頂列；移除針對活躍帳號，AlertDialog 二次確認）。shadcn
-		// control.Button（D31）。
-		if shadcontrol.Button(c, "＋", shadcontrol.ButtonProps{
+		// control.Button——ASCII 標籤（全形 ＋/− 缺字渲染為空白方塊，
+		// v1.1.5 快照實證）。
+		if shadcontrol.Button(c, "+", shadcontrol.ButtonProps{
 			Variant:  shadcontrol.Outline,
 			Disabled: a.switchBusy || len(a.accounts) >= maxAccounts,
 		}).Clicked() {
 			a.beginLoginVariant(loginModeAdd, "")
 		}
-		if shadcontrol.Button(c, "−", shadcontrol.ButtonProps{
+		if shadcontrol.Button(c, "-", shadcontrol.ButtonProps{
 			Variant:  shadcontrol.Outline,
 			Disabled: a.switchBusy || a.activeID == "",
 		}).Clicked() {
@@ -380,23 +385,31 @@ func (a *app) homeFeedView(c *ui.Context, band int) {
 		// 行收 clicks，不觸發開帖。
 		ui.List(c, &f.list, len(f.posts), func(i int) {
 			p := f.posts[i]
-			body := ui.Column(c).Padding(10, 16).Gap(4).Children(func() {
-				ui.Text(c, Sanitize("@"+p.ScreenName)).TextColor(t.TextMuted)
-				if p.Title != "" {
-					ui.Text(c, Sanitize(p.Title))
+			// 列本體以 shadcn Card 承接（D31：圓角面、hover 反饋）——純
+			// 文字牆即「未完成的表格」（mygo-components skill 語）。列內
+			// Avatar（MyGO 原生）＋作者＋內容階層。
+			shaddisplay.Card(c, func() {
+				body := ui.Column(c).Padding(10, 16).Gap(4).Children(func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Avatar(c, p.ScreenName, nil)
+						ui.Text(c, Sanitize("@"+p.ScreenName)).TextColor(t.TextMuted)
+					})
+					if p.Title != "" {
+						ui.Text(c, Sanitize(p.Title))
+					}
+					if p.WorkURL != "" {
+						ui.Link(c, "開啟貼文", Sanitize(p.WorkURL))
+					}
+					a.thumbRow(c, kind, f, p) // 縮圖格（僅含媒體貼文渲染；Task 12）
+				})
+				// 展開檢視入口（單一活躍播放器規則見 openDetail）：各帶皆
+				// 可開帖——窄帶（band <2）以全寬 detail 頁承接（F2 裁決，
+				// homeView 分流；收合路徑恆在 detailView 內，無殘留播放器
+				// 風險），寬帶為右欄並列。
+				if body.RowClicked() {
+					a.openDetail(p)
 				}
-				if p.WorkURL != "" {
-					ui.Link(c, "開啟貼文", Sanitize(p.WorkURL))
-				}
-				a.thumbRow(c, kind, f, p) // 縮圖格（僅含媒體貼文渲染；Task 12）
 			})
-			// 展開檢視入口（單一活躍播放器規則見 openDetail）：各帶皆
-			// 可開帖——窄帶（band <2）以全寬 detail 頁承接（F2 裁決，
-			// homeView 分流；收合路徑恆在 detailView 內，無殘留播放器
-			// 風險），寬帶為右欄並列。
-			if body.RowClicked() {
-				a.openDetail(p)
-			}
 		}).Grow(1)
 		// 到底提示：游標空（或與前頁相同）後顯示，且不再觸發翻頁。
 		if f.end {
